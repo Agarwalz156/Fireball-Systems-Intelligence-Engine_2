@@ -1,0 +1,8 @@
+# Ignore Python agent and tests during Vercel frontend build
+agent/
+tests/
+Dockerfile
+Procfile
+render.yaml
+*.py
+*.sh

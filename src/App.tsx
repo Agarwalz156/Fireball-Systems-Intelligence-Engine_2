@@ -23,6 +23,7 @@ import { AnomaliesTab } from './components/AnomaliesTab';
 import { InvestigationsTab } from './components/InvestigationsTab';
 import { ExperimentsTab } from './components/ExperimentsTab';
 import { AgentTab } from './components/AgentTab';
+import { QuickStatsBar } from './components/QuickStatsBar';
 import { ReportModal } from './components/ReportModal';
 
 type TabType = 'overview' | 'performance' | 'anomalies' | 'investigations' | 'experiments' | 'agent';
@@ -350,6 +351,13 @@ export default function App() {
           </button>
         </div>
       </nav>
+
+      {/* Quick Stats Summary Widget */}
+      <QuickStatsBar
+        machine={activeMachine}
+        latestSample={latestSample}
+        anomalies={anomalies}
+      />
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto w-full p-4 md:p-6 flex-1">

@@ -238,6 +238,28 @@ class LinuxTelemetryCollector:
         except Exception:
             return None, None
 
+    def read_disk_space_usage(self, path: str = "/") -> Dict[str, Any]:
+        """Reads root filesystem capacity using os.statvfs."""
+        try:
+            st = os.statvfs(path)
+            total = st.f_blocks * st.f_frsize
+            avail = st.f_bavail * st.f_frsize
+            used = total - avail
+            percent = round((used / total * 100.0), 1) if total > 0 else 0.0
+            return {
+                "diskTotalBytes": total,
+                "diskUsedBytes": used,
+                "diskAvailableBytes": avail,
+                "diskPercent": percent,
+            }
+        except Exception:
+            return {
+                "diskTotalBytes": None,
+                "diskUsedBytes": None,
+                "diskAvailableBytes": None,
+                "diskPercent": None,
+            }
+
     def read_network_rates(self) -> Tuple[Optional[float], Optional[float]]:
         """Reads /proc/net/dev to compute aggregate RX and TX bytes/sec."""
         curr_stats = {}
@@ -440,6 +462,7 @@ class FireballAgent:
         psi_io = self.collector.read_psi("/proc/pressure/io")
 
         http_probe = self.prober.probe()
+        disk_space = self.collector.read_disk_space_usage()
         top_procs = self.collector.read_top_processes(limit=5)
 
         sample = {
@@ -462,6 +485,10 @@ class FireballAgent:
             "swapPercent": mem_metrics["swapPercent"],
             "diskReadBytesPerSec": disk_r,
             "diskWriteBytesPerSec": disk_w,
+            "diskPercent": disk_space.get("diskPercent"),
+            "diskTotalBytes": disk_space.get("diskTotalBytes"),
+            "diskUsedBytes": disk_space.get("diskUsedBytes"),
+            "diskAvailableBytes": disk_space.get("diskAvailableBytes"),
             "networkRxBytesPerSec": net_rx,
             "networkTxBytesPerSec": net_tx,
             "psiCpuSome10": psi_cpu,

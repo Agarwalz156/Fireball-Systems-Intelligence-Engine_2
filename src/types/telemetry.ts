@@ -69,6 +69,12 @@ export interface TelemetrySample {
   diskReadIops?: number | null;
   diskWriteIops?: number | null;
 
+  // Disk Space / Filesystem Capacity
+  diskPercent?: number | null;
+  diskTotalBytes?: number | null;
+  diskUsedBytes?: number | null;
+  diskAvailableBytes?: number | null;
+
   // Network I/O (rates in bytes/sec)
   networkRxBytesPerSec: number | null;
   networkTxBytesPerSec: number | null;
