@@ -1,0 +1,5 @@
+# Fireball Linux Agent Dependencies (Optional)
+# The agent includes a native /proc and /sys parser and will run with zero external dependencies on standard Python 3.10+
+# Install psutil for enhanced cross-platform and extended disk/network metrics:
+psutil>=5.9.0
+requests>=2.31.0

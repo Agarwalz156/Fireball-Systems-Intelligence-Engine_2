@@ -1,0 +1,10 @@
+node_modules
+.git
+.aistudio
+dist
+server.js
+npm-debug.log
+agent/__pycache__
+*.pyc
+.env*
+!.env.example

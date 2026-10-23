@@ -1,0 +1,27 @@
+{
+  "backendUrl": "http://localhost:3000/api/telemetry/ingest",
+  "machineId": "host-ubuntu-server-01",
+  "enrollmentToken": "fb_token_replace_with_dashboard_token",
+  "samplingIntervalSec": 2,
+  "probeEndpointUrl": "http://localhost:3000",
+  "alertRules": {
+    "cpuWarningPercent": 75,
+    "cpuCriticalPercent": 90,
+    "cpuSustainedCycles": 3,
+    "memoryWarningPercent": 80,
+    "memoryCriticalPercent": 90,
+    "destinations": {
+      "emails": [
+        "oncall-devops@company.com"
+      ],
+      "webhooks": [
+        {
+          "name": "Slack Incidents Channel",
+          "url": "https://hooks.slack.com/services/T00/B00/XXXXX",
+          "minSeverity": "warning",
+          "enabled": true
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Fireball — Systems Intelligence Engine",
+  "description": "Linux systems performance monitoring, anomaly detection, diagnostic hypotheses, and controlled experiment verification engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

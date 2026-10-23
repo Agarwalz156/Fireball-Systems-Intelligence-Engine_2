@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+server.js
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+.aistudio/
+__pycache__/
+*.pyc
+agent/agent_config.json

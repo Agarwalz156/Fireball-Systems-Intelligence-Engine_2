@@ -1,0 +1,165 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile holding preferences and identity",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "Machine": {
+      "title": "Machine",
+      "description": "Registered Linux host or WSL2 instance running the Fireball agent",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "hostname": { "type": "string", "maxLength": 128 },
+        "os": { "type": "string", "maxLength": 128 },
+        "kernel": { "type": "string", "maxLength": 128 },
+        "arch": { "type": "string", "maxLength": 64 },
+        "cpuCores": { "type": "number" },
+        "totalMemoryBytes": { "type": "number" },
+        "agentVersion": { "type": "string", "maxLength": 64 },
+        "enrollmentToken": { "type": "string", "maxLength": 128 },
+        "lastHeartbeatAt": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["online", "degraded", "offline"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "ownerId", "hostname", "enrollmentToken", "status", "createdAt"]
+    },
+    "TelemetrySample": {
+      "title": "TelemetrySample",
+      "description": "Timestamped system performance observation ingested from Linux agent",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "machineId": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "cpuPercent": { "type": "number" },
+        "memoryPercent": { "type": "number" },
+        "memoryUsedBytes": { "type": "number" },
+        "memoryAvailableBytes": { "type": "number" },
+        "swapPercent": { "type": "number" },
+        "swapUsedBytes": { "type": "number" },
+        "load1m": { "type": "number" },
+        "load5m": { "type": "number" },
+        "load15m": { "type": "number" },
+        "diskReadBytesPerSec": { "type": "number" },
+        "diskWriteBytesPerSec": { "type": "number" },
+        "networkRxBytesPerSec": { "type": "number" },
+        "networkTxBytesPerSec": { "type": "number" },
+        "psiCpuSome10": { "type": "number" },
+        "psiMemorySome10": { "type": "number" },
+        "psiIoSome10": { "type": "number" },
+        "httpLatencyMs": { "type": "number" },
+        "httpStatusCode": { "type": "number" },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "machineId", "ownerId", "timestamp", "cpuPercent", "memoryPercent", "createdAt"]
+    },
+    "Anomaly": {
+      "title": "Anomaly",
+      "description": "Detected system or latency performance anomaly",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "machineId": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "metricName": { "type": "string", "maxLength": 64 },
+        "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
+        "observedValue": { "type": "number" },
+        "threshold": { "type": "number" },
+        "unit": { "type": "string", "maxLength": 32 },
+        "explanation": { "type": "string", "maxLength": 512 },
+        "timeWindow": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["active", "resolved", "acknowledged"] },
+        "detectedAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "machineId", "ownerId", "metricName", "severity", "observedValue", "threshold", "explanation", "status", "detectedAt", "createdAt"]
+    },
+    "Investigation": {
+      "title": "Investigation",
+      "description": "Evidence-backed diagnostic hypothesis correlating observations and uncertainty",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "machineId": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 256 },
+        "problemSummary": { "type": "string", "maxLength": 1024 },
+        "hypothesis": { "type": "string", "maxLength": 1024 },
+        "confidenceScore": { "type": "number" },
+        "confidenceCategory": { "type": "string", "enum": ["high", "medium", "low", "inconclusive"] },
+        "supportingEvidence": { "type": "string", "maxLength": 2048 },
+        "conflictingOrMissingEvidence": { "type": "string", "maxLength": 2048 },
+        "diagnosticRule": { "type": "string", "maxLength": 512 },
+        "recommendedNextSteps": { "type": "string", "maxLength": 2048 },
+        "status": { "type": "string", "enum": ["open", "investigating", "verified", "inconclusive"] },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "machineId", "ownerId", "title", "problemSummary", "hypothesis", "confidenceScore", "confidenceCategory", "diagnosticRule", "status", "createdAt"]
+    },
+    "Experiment": {
+      "title": "Experiment",
+      "description": "Controlled pre/post intervention trial to verify performance hypothesis",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "machineId": { "type": "string", "maxLength": 128 },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 256 },
+        "description": { "type": "string", "maxLength": 1024 },
+        "hypothesis": { "type": "string", "maxLength": 1024 },
+        "intervention": { "type": "string", "maxLength": 1024 },
+        "baselineStartTime": { "type": "string", "maxLength": 64 },
+        "baselineEndTime": { "type": "string", "maxLength": 64 },
+        "postStartTime": { "type": "string", "maxLength": 64 },
+        "postEndTime": { "type": "string", "maxLength": 64 },
+        "baselineSampleCount": { "type": "number" },
+        "postSampleCount": { "type": "number" },
+        "outcome": { "type": "string", "enum": ["supported", "refuted", "inconclusive"] },
+        "evaluationNotes": { "type": "string", "maxLength": 2048 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "machineId", "ownerId", "title", "hypothesis", "intervention", "outcome", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User identity and account metadata"
+    },
+    "/machines/{machineId}": {
+      "schema": "Machine",
+      "description": "Registered Linux hosts owned by user"
+    },
+    "/machines/{machineId}/telemetry/{telemetryId}": {
+      "schema": "TelemetrySample",
+      "description": "Timeseries system metrics recorded from Linux agent"
+    },
+    "/machines/{machineId}/anomalies/{anomalyId}": {
+      "schema": "Anomaly",
+      "description": "Detected metric thresholds and anomaly incidents"
+    },
+    "/machines/{machineId}/investigations/{investigationId}": {
+      "schema": "Investigation",
+      "description": "Diagnostic hypotheses with evidence, counter-evidence, and next steps"
+    },
+    "/machines/{machineId}/experiments/{experimentId}": {
+      "schema": "Experiment",
+      "description": "Controlled intervention comparisons with baseline and outcome"
+    }
+  }
+}

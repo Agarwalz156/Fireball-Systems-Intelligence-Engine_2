@@ -1,0 +1,185 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Parent machine verification
+    function isMachineOwner(machineId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/machines/$(machineId)) &&
+        get(/databases/$(database)/documents/machines/$(machineId)).data.ownerId == request.auth.uid;
+    }
+
+    // User profile validation
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'createdAt', 'updatedAt']) &&
+        data.uid is string && data.uid.size() <= 128 && data.uid == request.auth.uid &&
+        data.email is string && data.email.size() <= 256 &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 128)) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // Machine validation
+    function isValidMachine(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'hostname', 'enrollmentToken', 'status', 'createdAt']) &&
+        data.keys().hasOnly(['id', 'ownerId', 'hostname', 'os', 'kernel', 'arch', 'cpuCores', 'totalMemoryBytes', 'agentVersion', 'enrollmentToken', 'lastHeartbeatAt', 'status', 'createdAt', 'updatedAt']) &&
+        data.id is string && isValidId(data.id) &&
+        data.ownerId is string && data.ownerId == request.auth.uid &&
+        data.hostname is string && data.hostname.size() <= 128 &&
+        data.enrollmentToken is string && data.enrollmentToken.size() <= 128 &&
+        (data.status == 'online' || data.status == 'degraded' || data.status == 'offline') &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    // Telemetry validation
+    function isValidTelemetry(data, machineId) {
+      return data.keys().hasAll(['id', 'machineId', 'ownerId', 'timestamp', 'cpuPercent', 'memoryPercent', 'createdAt']) &&
+        data.id is string && isValidId(data.id) &&
+        data.machineId is string && data.machineId == machineId &&
+        data.ownerId is string && data.ownerId == request.auth.uid &&
+        data.timestamp is string && data.timestamp.size() <= 64 &&
+        data.cpuPercent is number && data.cpuPercent >= 0 && data.cpuPercent <= 100 &&
+        data.memoryPercent is number && data.memoryPercent >= 0 && data.memoryPercent <= 100 &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    // Anomaly validation
+    function isValidAnomaly(data, machineId) {
+      return data.keys().hasAll(['id', 'machineId', 'ownerId', 'metricName', 'severity', 'observedValue', 'threshold', 'explanation', 'status', 'detectedAt', 'createdAt']) &&
+        data.id is string && isValidId(data.id) &&
+        data.machineId is string && data.machineId == machineId &&
+        data.ownerId is string && data.ownerId == request.auth.uid &&
+        data.metricName is string && data.metricName.size() <= 64 &&
+        (data.severity == 'critical' || data.severity == 'warning' || data.severity == 'info') &&
+        data.observedValue is number &&
+        data.threshold is number &&
+        data.explanation is string && data.explanation.size() <= 512 &&
+        (data.status == 'active' || data.status == 'resolved' || data.status == 'acknowledged') &&
+        data.detectedAt is string && data.detectedAt.size() <= 64 &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    // Investigation validation
+    function isValidInvestigation(data, machineId) {
+      return data.keys().hasAll(['id', 'machineId', 'ownerId', 'title', 'problemSummary', 'hypothesis', 'confidenceScore', 'confidenceCategory', 'diagnosticRule', 'status', 'createdAt']) &&
+        data.id is string && isValidId(data.id) &&
+        data.machineId is string && data.machineId == machineId &&
+        data.ownerId is string && data.ownerId == request.auth.uid &&
+        data.title is string && data.title.size() <= 256 &&
+        data.problemSummary is string && data.problemSummary.size() <= 1024 &&
+        data.hypothesis is string && data.hypothesis.size() <= 1024 &&
+        data.confidenceScore is number && data.confidenceScore >= 0 && data.confidenceScore <= 100 &&
+        (data.confidenceCategory == 'high' || data.confidenceCategory == 'medium' || data.confidenceCategory == 'low' || data.confidenceCategory == 'inconclusive') &&
+        data.diagnosticRule is string && data.diagnosticRule.size() <= 512 &&
+        (data.status == 'open' || data.status == 'investigating' || data.status == 'verified' || data.status == 'inconclusive') &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    // Experiment validation
+    function isValidExperiment(data, machineId) {
+      return data.keys().hasAll(['id', 'machineId', 'ownerId', 'title', 'hypothesis', 'intervention', 'outcome', 'createdAt']) &&
+        data.id is string && isValidId(data.id) &&
+        data.machineId is string && data.machineId == machineId &&
+        data.ownerId is string && data.ownerId == request.auth.uid &&
+        data.title is string && data.title.size() <= 256 &&
+        data.hypothesis is string && data.hypothesis.size() <= 1024 &&
+        data.intervention is string && data.intervention.size() <= 1024 &&
+        (data.outcome == 'supported' || data.outcome == 'refuted' || data.outcome == 'inconclusive') &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming()) && incoming().uid == existing().uid && incoming().createdAt == existing().createdAt;
+      allow delete: if false; // User deletion disabled
+    }
+
+    // Machines Collection
+    match /machines/{machineId} {
+      allow get: if isSignedIn() && isValidId(machineId) && existing().ownerId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(machineId) && isValidMachine(incoming()) && incoming().id == machineId;
+      allow update: if isSignedIn() && isValidId(machineId) && isValidMachine(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt;
+      allow delete: if isSignedIn() && isValidId(machineId) && existing().ownerId == request.auth.uid;
+
+      // Telemetry subcollection
+      match /telemetry/{telemetryId} {
+        allow get: if isMachineOwner(machineId) && isValidId(telemetryId);
+        allow list: if isMachineOwner(machineId);
+        allow create: if isMachineOwner(machineId) && isValidId(telemetryId) && isValidTelemetry(incoming(), machineId) && incoming().id == telemetryId;
+        allow update: if false; // Telemetry samples are immutable audit records
+        allow delete: if isMachineOwner(machineId) && isValidId(telemetryId);
+      }
+
+      // Anomalies subcollection
+      match /anomalies/{anomalyId} {
+        allow get: if isMachineOwner(machineId) && isValidId(anomalyId);
+        allow list: if isMachineOwner(machineId);
+        allow create: if isMachineOwner(machineId) && isValidId(anomalyId) && isValidAnomaly(incoming(), machineId) && incoming().id == anomalyId;
+        allow update: if isMachineOwner(machineId) && isValidId(anomalyId) && isValidAnomaly(incoming(), machineId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'explanation', 'observedValue', 'threshold']);
+        allow delete: if isMachineOwner(machineId) && isValidId(anomalyId);
+      }
+
+      // Investigations subcollection
+      match /investigations/{investigationId} {
+        allow get: if isMachineOwner(machineId) && isValidId(investigationId);
+        allow list: if isMachineOwner(machineId);
+        allow create: if isMachineOwner(machineId) && isValidId(investigationId) && isValidInvestigation(incoming(), machineId) && incoming().id == investigationId;
+        allow update: if isMachineOwner(machineId) && isValidId(investigationId) && isValidInvestigation(incoming(), machineId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt;
+        allow delete: if isMachineOwner(machineId) && isValidId(investigationId);
+      }
+
+      // Experiments subcollection
+      match /experiments/{experimentId} {
+        allow get: if isMachineOwner(machineId) && isValidId(experimentId);
+        allow list: if isMachineOwner(machineId);
+        allow create: if isMachineOwner(machineId) && isValidId(experimentId) && isValidExperiment(incoming(), machineId) && incoming().id == experimentId;
+        allow update: if isMachineOwner(machineId) && isValidId(experimentId) && isValidExperiment(incoming(), machineId) &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().id == existing().id &&
+          incoming().createdAt == existing().createdAt;
+        allow delete: if isMachineOwner(machineId) && isValidId(experimentId);
+      }
+    }
+  }
+}
