@@ -49,7 +49,7 @@ service cloud.firestore {
     // Machine validation
     function isValidMachine(data) {
       return data.keys().hasAll(['id', 'ownerId', 'hostname', 'enrollmentToken', 'status', 'createdAt']) &&
-        data.keys().hasOnly(['id', 'ownerId', 'hostname', 'os', 'kernel', 'arch', 'cpuCores', 'totalMemoryBytes', 'agentVersion', 'enrollmentToken', 'lastHeartbeatAt', 'status', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'ownerId', 'hostname', 'os', 'platform', 'osVersion', 'kernel', 'arch', 'cpuCores', 'totalMemoryBytes', 'agentVersion', 'enrollmentToken', 'lastHeartbeatAt', 'lastTelemetryAt', 'status', 'connectionStatus', 'collectionErrors', 'availableMetrics', 'isRevoked', 'capabilities', 'alertRules', 'uptimeSeconds', 'createdAt', 'updatedAt']) &&
         data.id is string && isValidId(data.id) &&
         data.ownerId is string && data.ownerId == request.auth.uid &&
         data.hostname is string && data.hostname.size() <= 128 &&

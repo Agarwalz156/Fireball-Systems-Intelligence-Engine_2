@@ -36,15 +36,17 @@ export interface TelemetrySample {
 
   // CPU
   cpuPercent: number;
+  cpuPerCore?: number[] | null;
   cpuUserPercent?: number | null;
   cpuSystemPercent?: number | null;
   cpuIowaitPercent?: number | null;
   cpuStealPercent?: number | null;
 
-  // System Load
+  // System Load & Uptime
   load1m?: number | null;
   load5m?: number | null;
   load15m?: number | null;
+  uptimeSeconds?: number | null;
 
   // Physical Memory
   memoryPercent: number;
@@ -55,7 +57,7 @@ export interface TelemetrySample {
   memoryCachedBytes?: number | null;
   memoryBuffersBytes?: number | null;
 
-  // Swap
+  // Swap / Pagefile
   swapPercent: number;
   swapTotalBytes: number;
   swapUsedBytes: number;
@@ -80,7 +82,7 @@ export interface TelemetrySample {
   networkTxBytesPerSec: number | null;
   networkErrorsPerSec?: number | null;
 
-  // Linux PSI (Pressure Stall Information) - null if unsupported (e.g. non-PSI kernel or container)
+  // Linux PSI (Pressure Stall Information) - null if unsupported (e.g. non-PSI kernel, container, or Windows)
   psiCpuSome10: number | null;
   psiMemorySome10: number | null;
   psiIoSome10: number | null;
@@ -99,11 +101,21 @@ export interface TelemetrySample {
 
 export type MachineStatus = 'online' | 'degraded' | 'offline';
 
+export type MachineConnectionStatus =
+  | 'connected'
+  | 'disconnected'
+  | 'waiting_for_telemetry'
+  | 'auth_failed'
+  | 'agent_error';
+
 export interface Machine {
   id: string;
+  name?: string;
   ownerId: string;
   hostname: string;
   os: string;
+  platform?: 'windows' | 'linux' | 'darwin';
+  osVersion?: string;
   kernel: string;
   arch: string;
   cpuCores: number;
@@ -111,7 +123,12 @@ export interface Machine {
   agentVersion: string;
   enrollmentToken: string;
   lastHeartbeatAt: string;
+  lastTelemetryAt?: string;
   status: MachineStatus;
+  connectionStatus?: MachineConnectionStatus;
+  collectionErrors?: string[];
+  availableMetrics?: string[];
+  isRevoked?: boolean;
   capabilities: {
     hasPsi: boolean;
     hasSwap: boolean;
@@ -120,6 +137,7 @@ export interface Machine {
     hasProcessStats: boolean;
     isWsl: boolean;
     isContainer: boolean;
+    isWindows?: boolean;
   };
   alertRules?: AlertRulesConfig;
   createdAt: string;
