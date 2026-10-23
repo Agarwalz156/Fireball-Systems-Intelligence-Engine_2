@@ -4,6 +4,7 @@ import {
   AlertRulesConfig,
   DEFAULT_ALERT_RULES,
   WebhookDestination,
+  TelemetrySample,
 } from '../types/telemetry';
 import {
   Terminal,
@@ -25,22 +26,29 @@ import {
   Radio,
   AlertCircle,
   HelpCircle,
+  Zap,
 } from 'lucide-react';
 
 interface AgentTabProps {
   machine: Machine | null;
+  latestSample?: TelemetrySample | null;
   onRefreshMachine: () => void;
   onUpdateAlertRules?: (machineId: string, rules: AlertRulesConfig) => Promise<void>;
+  onTriggerWorkload?: (type: 'cpu' | 'memory', durationSec?: number) => Promise<void>;
 }
 
 export const AgentTab: React.FC<AgentTabProps> = ({
   machine,
+  latestSample,
   onRefreshMachine,
   onUpdateAlertRules,
+  onTriggerWorkload,
 }) => {
   const [copied, setCopied] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [isSimulatingAlert, setIsSimulatingAlert] = useState<string | null>(null);
+  const [simulationMsg, setSimulationMsg] = useState<string | null>(null);
 
   // Alert Rules State
   const initialRules = machine?.alertRules || DEFAULT_ALERT_RULES;
@@ -121,6 +129,24 @@ export const AgentTab: React.FC<AgentTabProps> = ({
       setCpuCycles(5);
       setMemWarning(88);
       setMemCritical(96);
+    }
+  };
+
+  const currentCpu = latestSample?.cpuPercent ?? 0;
+  const currentMem = latestSample?.memoryPercent ?? 0;
+
+  const handleSimulateAlert = async (type: 'cpu' | 'memory') => {
+    if (!onTriggerWorkload) return;
+    setIsSimulatingAlert(type);
+    setSimulationMsg(null);
+    try {
+      await onTriggerWorkload(type, 6);
+      setSimulationMsg(`Generated 6s ${type.toUpperCase()} test workload to verify automated anomaly alert triggering. Check Anomalies tab!`);
+      setTimeout(() => setSimulationMsg(null), 7000);
+    } catch (err: any) {
+      setSimulationMsg(`Simulation failed: ${err.message}`);
+    } finally {
+      setIsSimulatingAlert(null);
     }
   };
 
@@ -405,6 +431,22 @@ export const AgentTab: React.FC<AgentTabProps> = ({
           </div>
         </div>
 
+        {/* Simulation Feedback Banner */}
+        {simulationMsg && (
+          <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{simulationMsg}</span>
+            </span>
+            <button
+              onClick={() => setSimulationMsg(null)}
+              className="text-zinc-500 hover:text-zinc-300 text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Threshold Sliders and Number Inputs Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* CPU Utilization Alert Rules */}
@@ -412,17 +454,41 @@ export const AgentTab: React.FC<AgentTabProps> = ({
             <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
               <span className="text-xs font-bold font-mono text-zinc-200 flex items-center gap-2">
                 <Cpu className="w-4 h-4 text-amber-400" />
-                CPU Utilization Thresholds
+                CPU Utilization Alert Thresholds
               </span>
               <span className="text-[10px] font-mono text-zinc-500">Unit: % Busy</span>
+            </div>
+
+            {/* Live CPU vs Threshold Indicator */}
+            <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800/90 flex items-center justify-between text-xs font-mono">
+              <div>
+                <span className="text-zinc-500 text-[10px] block font-semibold uppercase">Current Host CPU</span>
+                <span className={`text-base font-bold ${
+                  currentCpu >= cpuCritical ? 'text-red-400' : currentCpu >= cpuWarning ? 'text-amber-300' : 'text-emerald-400'
+                }`}>
+                  {currentCpu.toFixed(1)}%
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-zinc-500 text-[10px] block font-semibold uppercase">Anomaly Alert Trigger Status</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase inline-block mt-0.5 ${
+                  currentCpu >= cpuCritical
+                    ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                    : currentCpu >= cpuWarning
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                }`}>
+                  {currentCpu >= cpuCritical ? '🚨 Critical Alert Active' : currentCpu >= cpuWarning ? '⚠️ Warning Alert Active' : '✓ Normal (Below Limits)'}
+                </span>
+              </div>
             </div>
 
             {/* Warning Threshold Slider */}
             <div className="space-y-1.5">
               <div className="flex justify-between items-center text-xs font-mono">
                 <label className="text-amber-300 font-medium flex items-center gap-1">
-                  <span>Warning Threshold</span>
-                  <span className="text-zinc-500 text-[10px]">(Elevated load)</span>
+                  <span>Warning Threshold (%)</span>
+                  <span className="text-zinc-500 text-[10px]">(Automated warning trigger)</span>
                 </label>
                 <div className="flex items-center gap-1">
                   <input
@@ -454,7 +520,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
               />
               <div className="flex justify-between text-[10px] font-mono text-zinc-600">
                 <span>10%</span>
-                <span>Warning at {cpuWarning}%</span>
+                <span>Warning fires at {cpuWarning}%</span>
                 <span>98%</span>
               </div>
             </div>
@@ -463,8 +529,8 @@ export const AgentTab: React.FC<AgentTabProps> = ({
             <div className="space-y-1.5 pt-2 border-t border-zinc-900">
               <div className="flex justify-between items-center text-xs font-mono">
                 <label className="text-red-400 font-medium flex items-center gap-1">
-                  <span>Critical Threshold</span>
-                  <span className="text-zinc-500 text-[10px]">(Saturation stall)</span>
+                  <span>Critical Threshold (%)</span>
+                  <span className="text-zinc-500 text-[10px]">(Urgent saturation trigger)</span>
                 </label>
                 <div className="flex items-center gap-1">
                   <input
@@ -496,7 +562,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
               />
               <div className="flex justify-between text-[10px] font-mono text-zinc-600">
                 <span>20%</span>
-                <span>Critical at {cpuCritical}%</span>
+                <span>Critical fires at {cpuCritical}%</span>
                 <span>100%</span>
               </div>
             </div>
@@ -521,6 +587,21 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                 <span className="text-zinc-400">samples</span>
               </div>
             </div>
+
+            {/* Trigger Simulation Button */}
+            <div className="pt-2 border-t border-zinc-900 flex items-center justify-between">
+              <span className="text-[10px] text-zinc-500 font-mono">Test Auto-Alert:</span>
+              <button
+                type="button"
+                onClick={() => handleSimulateAlert('cpu')}
+                disabled={isSimulatingAlert !== null}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-amber-500/30 text-amber-300 text-xs font-mono transition-colors disabled:opacity-50 cursor-pointer"
+                title="Generates a brief CPU workload to trigger anomaly detection"
+              >
+                <Zap className="w-3 h-3 text-amber-400" />
+                <span>{isSimulatingAlert === 'cpu' ? 'Spiking CPU...' : 'Simulate CPU Threshold Breach'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Memory Usage Alert Rules */}
@@ -528,17 +609,41 @@ export const AgentTab: React.FC<AgentTabProps> = ({
             <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
               <span className="text-xs font-bold font-mono text-zinc-200 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-emerald-400" />
-                Physical Memory Thresholds
+                Memory Usage Alert Thresholds
               </span>
               <span className="text-[10px] font-mono text-zinc-500">Unit: % RAM Allocated</span>
+            </div>
+
+            {/* Live RAM vs Threshold Indicator */}
+            <div className="p-3 rounded-lg bg-zinc-900/80 border border-zinc-800/90 flex items-center justify-between text-xs font-mono">
+              <div>
+                <span className="text-zinc-500 text-[10px] block font-semibold uppercase">Current Host RAM</span>
+                <span className={`text-base font-bold ${
+                  currentMem >= memCritical ? 'text-red-400' : currentMem >= memWarning ? 'text-amber-300' : 'text-emerald-400'
+                }`}>
+                  {currentMem.toFixed(1)}%
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-zinc-500 text-[10px] block font-semibold uppercase">Anomaly Alert Trigger Status</span>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase inline-block mt-0.5 ${
+                  currentMem >= memCritical
+                    ? 'bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse'
+                    : currentMem >= memWarning
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                }`}>
+                  {currentMem >= memCritical ? '🚨 OOM Risk Alert Active' : currentMem >= memWarning ? '⚠️ Memory Warning Active' : '✓ Normal (Below Limits)'}
+                </span>
+              </div>
             </div>
 
             {/* Memory Warning Threshold Slider */}
             <div className="space-y-1.5">
               <div className="flex justify-between items-center text-xs font-mono">
                 <label className="text-amber-300 font-medium flex items-center gap-1">
-                  <span>Warning Threshold</span>
-                  <span className="text-zinc-500 text-[10px]">(Available &lt; {100 - memWarning}%)</span>
+                  <span>Warning Threshold (%)</span>
+                  <span className="text-zinc-500 text-[10px]">(Avail &lt; {100 - memWarning}%)</span>
                 </label>
                 <div className="flex items-center gap-1">
                   <input
@@ -570,7 +675,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
               />
               <div className="flex justify-between text-[10px] font-mono text-zinc-600">
                 <span>10%</span>
-                <span>Warning at {memWarning}%</span>
+                <span>Warning fires at {memWarning}%</span>
                 <span>98%</span>
               </div>
             </div>
@@ -579,7 +684,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
             <div className="space-y-1.5 pt-2 border-t border-zinc-900">
               <div className="flex justify-between items-center text-xs font-mono">
                 <label className="text-red-400 font-medium flex items-center gap-1">
-                  <span>Critical Threshold</span>
+                  <span>Critical Threshold (%)</span>
                   <span className="text-zinc-500 text-[10px]">(OOM risk: avail &lt; {100 - memCritical}%)</span>
                 </label>
                 <div className="flex items-center gap-1">
@@ -612,45 +717,75 @@ export const AgentTab: React.FC<AgentTabProps> = ({
               />
               <div className="flex justify-between text-[10px] font-mono text-zinc-600">
                 <span>20%</span>
-                <span>Critical at {memCritical}%</span>
+                <span>Critical fires at {memCritical}%</span>
                 <span>100%</span>
               </div>
             </div>
 
-            {/* Notification Delivery Channels */}
+            {/* Notification Delivery Channels & Simulation */}
             <div className="pt-2 border-t border-zinc-900 space-y-2 text-xs font-mono">
-              <span className="text-zinc-400 block text-[11px] font-semibold">Local Delivery Channels:</span>
               <div className="flex items-center justify-between">
-                <label className="text-zinc-300 flex items-center gap-2 cursor-pointer">
+                <span className="text-zinc-400 text-[11px] font-semibold">Delivery Channels:</span>
+                <label className="text-zinc-300 flex items-center gap-1.5 cursor-pointer text-[11px]">
                   <input
                     type="checkbox"
                     checked={notifyInApp}
                     onChange={(e) => setNotifyInApp(e.target.checked)}
                     className="rounded bg-zinc-900 border-zinc-700 accent-amber-500"
                   />
-                  <span>Dashboard In-App Banners & Incident Feed</span>
+                  <span>In-App Banners</span>
                 </label>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <label className="text-zinc-300 flex items-center gap-2 cursor-pointer">
+                <label className="text-zinc-300 flex items-center gap-1.5 cursor-pointer text-[11px]">
                   <input
                     type="checkbox"
                     checked={notifyBrowser}
                     onChange={(e) => {
-                      if (e.target.checked) {
-                        requestBrowserPermission();
-                      } else {
-                        setNotifyBrowser(false);
-                      }
+                      if (e.target.checked) requestBrowserPermission();
+                      else setNotifyBrowser(false);
                     }}
                     className="rounded bg-zinc-900 border-zinc-700 accent-amber-500"
                   />
-                  <span>Browser Desktop Push Notifications</span>
+                  <span>Browser Push</span>
                 </label>
+              </div>
+
+              {/* Trigger Simulation Button */}
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[10px] text-zinc-500 font-mono">Test Auto-Alert:</span>
+                <button
+                  type="button"
+                  onClick={() => handleSimulateAlert('memory')}
+                  disabled={isSimulatingAlert !== null}
+                  className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-emerald-500/30 text-emerald-300 text-xs font-mono transition-colors disabled:opacity-50 cursor-pointer"
+                  title="Generates a brief Memory workload to trigger anomaly detection"
+                >
+                  <Zap className="w-3 h-3 text-emerald-400" />
+                  <span>{isSimulatingAlert === 'memory' ? 'Allocating RAM...' : 'Simulate RAM Threshold Breach'}</span>
+                </button>
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Global Save Button for Alert Rules & Thresholds */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-zinc-800">
+          <div className="flex items-center gap-2 text-xs font-mono">
+            {saveMessage && (
+              <span className="flex items-center gap-1.5 text-emerald-400 animate-fadeIn font-semibold">
+                <CheckCircle2 className="w-4 h-4" />
+                {saveMessage}
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={handleSaveAlertRules}
+            disabled={isSaving}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs font-mono transition-colors shadow-sm disabled:opacity-50 cursor-pointer"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>{isSaving ? 'Applying Thresholds...' : 'Save & Apply Custom Thresholds'}</span>
+          </button>
         </div>
       </div>
 

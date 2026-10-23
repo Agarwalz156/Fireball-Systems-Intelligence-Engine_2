@@ -11,3 +11,5 @@ coverage/
 __pycache__/
 *.pyc
 agent/agent_config.json
+bun.lock
+bun.lockb

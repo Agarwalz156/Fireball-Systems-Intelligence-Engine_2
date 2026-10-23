@@ -409,8 +409,10 @@ export default function App() {
         {activeTab === 'agent' && (
           <AgentTab
             machine={activeMachine}
+            latestSample={latestSample}
             onRefreshMachine={fetchMachines}
             onUpdateAlertRules={handleUpdateAlertRules}
+            onTriggerWorkload={handleTriggerWorkload}
           />
         )}
       </main>
