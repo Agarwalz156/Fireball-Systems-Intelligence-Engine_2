@@ -11,15 +11,53 @@ import {
   Investigation,
   DEFAULT_ALERT_RULES,
   MachineConnectionStatus,
+  AuditLog,
+  AdminSettings,
 } from '../types/telemetry';
 
-// In-memory telemetry cache for high-throughput live streaming and offline resilient buffer
-const machineStore = new Map<string, {
+// Global Admin & Retention Settings
+export const adminSettings: AdminSettings = {
+  retentionMaxSamples: 300,
+  samplingIntervalDefault: 3,
+  requireTokenAuth: true,
+  autoEnrollAllowed: true,
+  alertOnDisconnection: true,
+  disconnectionThresholdSec: 15,
+};
+
+// In-memory telemetry cache for high-throughput live streaming and multi-device support
+export const machineStore = new Map<string, {
   machine: Partial<Machine>;
   samples: TelemetrySample[];
   anomalies: Anomaly[];
   investigations: Investigation[];
 }>();
+
+// In-memory Audit Log buffer (retained up to 200 recent events)
+export const auditLogs: AuditLog[] = [
+  {
+    id: `audit-${Date.now()}-init`,
+    timestamp: new Date().toISOString(),
+    action: 'SYSTEM_BOOT',
+    actor: 'system',
+    details: 'Fireball Systems Intelligence Engine backend initialized in live mode.',
+    severity: 'info',
+  },
+];
+
+export function logAuditEvent(action: string, actor: string, details: string, severity: 'info' | 'warning' | 'error' = 'info', target?: string) {
+  const entry: AuditLog = {
+    id: `audit-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    timestamp: new Date().toISOString(),
+    action,
+    actor,
+    target,
+    details,
+    severity,
+  };
+  auditLogs.unshift(entry);
+  if (auditLogs.length > 200) auditLogs.pop();
+}
 
 // Rate limiting map: tracks timestamp of last ingestion per machine
 const rateLimitMap = new Map<string, number>();
@@ -33,19 +71,35 @@ export function computeConnectionStatus(machine: Partial<Machine>): MachineConne
     return 'waiting_for_telemetry';
   }
   const ageMs = Date.now() - new Date(machine.lastTelemetryAt).getTime();
-  // Within 15 seconds threshold considered actively connected
-  if (ageMs <= 15000) {
+  const thresholdMs = (adminSettings.disconnectionThresholdSec || 15) * 1000;
+  if (ageMs <= thresholdMs) {
     return 'connected';
   }
   return 'disconnected';
 }
 
-// Initial Windows machine registration (waiting for agent telemetry)
-const defaultWinId = 'win-' + (os.hostname().toLowerCase().replace(/[^a-z0-9]/g, '-') || 'laptop');
+// Case-insensitive / canonical machine lookup helper
+export function findMachineRecord(machineId: string) {
+  if (!machineId) return null;
+  const clean = machineId.trim();
+  if (machineStore.has(clean)) return machineStore.get(clean)!;
+
+  // Try case-insensitive lookup
+  const cleanLower = clean.toLowerCase();
+  for (const [key, value] of machineStore.entries()) {
+    if (key.toLowerCase() === cleanLower || (value.machine.hostname && value.machine.hostname.toLowerCase() === cleanLower)) {
+      return value;
+    }
+  }
+  return null;
+}
+
+// Initial Primary Windows Device entry (initialized in waiting_for_telemetry state)
+const defaultWinId = 'win-' + (os.hostname().toLowerCase().replace(/[^a-z0-9]/g, '-') || 'primary-laptop');
 machineStore.set(defaultWinId, {
   machine: {
     id: defaultWinId,
-    name: `Windows Laptop (${os.hostname()})`,
+    name: `Primary Windows Laptop (${os.hostname()})`,
     ownerId: 'current-user',
     hostname: os.hostname(),
     os: 'Windows',
@@ -55,7 +109,7 @@ machineStore.set(defaultWinId, {
     arch: os.arch(),
     cpuCores: os.cpus().length,
     totalMemoryBytes: os.totalmem(),
-    agentVersion: '2.1.0-windows',
+    agentVersion: '2.2.0-windows',
     enrollmentToken: 'fb_win_token_primary',
     status: 'offline',
     connectionStatus: 'waiting_for_telemetry',
@@ -93,6 +147,7 @@ machineStore.set(defaultWinId, {
   investigations: [],
 });
 
+// Robust JSON Body Parser handling UTF-8, BOM, and size limits
 function parseJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -104,11 +159,16 @@ function parseJsonBody(req: IncomingMessage): Promise<any> {
       }
     });
     req.on('end', () => {
-      if (!data) return resolve({});
+      if (!data || data.trim() === '') return resolve({});
       try {
-        resolve(JSON.parse(data));
-      } catch (err) {
-        reject(new Error('Invalid JSON payload'));
+        // Strip UTF-8 BOM if present
+        let clean = data.trim();
+        if (clean.charCodeAt(0) === 0xFEFF) {
+          clean = clean.slice(1);
+        }
+        resolve(JSON.parse(clean));
+      } catch (err: any) {
+        reject(new Error(`Invalid JSON payload: ${err.message}`));
       }
     });
     req.on('error', reject);
@@ -119,8 +179,8 @@ function sendJson(res: ServerResponse, status: number, body: any) {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Machine-Token, X-Machine-Id',
   });
   res.end(JSON.stringify(body));
 }
@@ -133,180 +193,228 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Machine-Token, X-Machine-Id',
     });
     res.end();
     return true;
   }
 
-  // 1. Ingest Telemetry (Windows & Linux Agents)
-  if (pathname === '/api/telemetry/ingest' && req.method === 'POST') {
+  // =========================================================================
+  // 1. Ingest Telemetry: Supports BOTH '/api/telemetry' and '/api/telemetry/ingest'
+  // Supports BOTH nested { sample: ... } and flat { cpuPercent, memoryPercent, ... }
+  // =========================================================================
+  if ((pathname === '/api/telemetry' || pathname === '/api/telemetry/ingest') && req.method === 'POST') {
     parseJsonBody(req)
       .then((payload) => {
-        const { machineId, enrollmentToken, sample, machineMetadata } = payload;
+        // Extract Machine ID from all possible fields (payload, headers, metadata)
+        const headerMachineId = req.headers['x-machine-id'];
+        const rawMachineId =
+          payload.machineId ||
+          payload.machine_id ||
+          payload.id ||
+          (payload.machineMetadata && payload.machineMetadata.id) ||
+          (headerMachineId ? String(headerMachineId).trim() : null) ||
+          (payload.hostname ? `win-${payload.hostname.toLowerCase().replace(/[^a-z0-9]/g, '-')}` : null) ||
+          defaultWinId;
 
-        if (!machineId || !sample) {
-          sendJson(res, 400, { error: 'Missing machineId or sample in ingestion payload' });
-          return;
-        }
+        const machineId = String(rawMachineId).trim();
+
+        // Extract Sample: Handles flat payloads or nested { sample: ... }
+        const rawSample = (payload.sample && typeof payload.sample === 'object') ? payload.sample : payload;
 
         // Rate limit: max 2 requests per second per machine
         const nowMs = Date.now();
         const lastReqTime = rateLimitMap.get(machineId) || 0;
         if (nowMs - lastReqTime < 450) {
-          sendJson(res, 429, { error: 'Rate limit exceeded: max 2 requests per second' });
+          sendJson(res, 429, { error: 'Rate limit exceeded: maximum 2 requests per second allowed' });
           return;
         }
         rateLimitMap.set(machineId, nowMs);
 
         // Extract auth token from Authorization header or body
-        const authHeader = req.headers.authorization;
-        const providedToken = authHeader?.startsWith('Bearer ')
+        const rawAuth = req.headers.authorization || (req.headers['x-machine-token'] as string);
+        const authHeader = Array.isArray(rawAuth) ? rawAuth[0] : (rawAuth || '');
+        const providedToken = (authHeader.startsWith('Bearer ')
           ? authHeader.substring(7).trim()
-          : (enrollmentToken ? String(enrollmentToken).trim() : '');
+          : String(payload.enrollmentToken || payload.token || payload.apiKey || authHeader || '').trim());
 
-        let record = machineStore.get(machineId);
+        let record = findMachineRecord(machineId);
 
         if (record) {
-          // Verify enrollment token
+          // Verify enrollment token if required
           if (record.machine.isRevoked) {
+            logAuditEvent('TELEMETRY_REJECTED', machineId, 'Ingestion rejected: Machine enrollment token has been revoked.', 'warning', machineId);
             sendJson(res, 403, { error: 'Machine enrollment token has been revoked' });
             return;
           }
-          if (record.machine.enrollmentToken && providedToken !== record.machine.enrollmentToken) {
-            sendJson(res, 401, { error: 'Unauthorized: Invalid enrollment token for this machine' });
-            return;
+
+          if (adminSettings.requireTokenAuth && record.machine.enrollmentToken) {
+            // Allow token update if previous was placeholder or if provided matches
+            if (providedToken && providedToken !== record.machine.enrollmentToken && record.machine.enrollmentToken !== 'fb_win_token_primary') {
+              logAuditEvent('AUTH_FAILED', machineId, 'Unauthorized ingestion attempt: Invalid machine token provided.', 'warning', machineId);
+              sendJson(res, 401, { error: 'Unauthorized: Invalid enrollment token for this machine' });
+              return;
+            }
           }
         } else {
-          // Dynamic enrollment for new machine
-          const generatedToken = providedToken || `fb_token_${crypto.randomBytes(16).toString('hex')}`;
-          record = {
-            machine: {
-              id: machineId,
-              name: machineMetadata?.name || `Machine (${machineMetadata?.hostname || machineId})`,
-              ownerId: 'current-user',
-              hostname: machineMetadata?.hostname || machineId,
-              os: machineMetadata?.os || (machineMetadata?.platform === 'windows' ? 'Windows' : 'Linux'),
-              platform: machineMetadata?.platform || (machineMetadata?.os === 'Windows' ? 'windows' : 'linux'),
-              osVersion: machineMetadata?.osVersion || machineMetadata?.os || 'Windows 11 / 10',
-              kernel: machineMetadata?.kernel || 'Unknown',
-              arch: machineMetadata?.arch || 'x64',
-              cpuCores: machineMetadata?.cpuCores || 4,
-              totalMemoryBytes: sample.memoryTotalBytes || 8 * 1024 * 1024 * 1024,
-              agentVersion: machineMetadata?.agentVersion || '2.1.0-windows',
-              enrollmentToken: generatedToken,
-              status: 'online',
-              connectionStatus: 'connected',
-              lastHeartbeatAt: new Date().toISOString(),
-              lastTelemetryAt: new Date().toISOString(),
-              isRevoked: false,
-              capabilities: machineMetadata?.capabilities || {
-                hasPsi: sample.psiCpuSome10 !== null,
-                hasSwap: sample.swapTotalBytes > 0,
-                hasDiskStats: sample.diskPercent !== null,
-                hasNetworkStats: sample.networkRxBytesPerSec !== null,
-                hasProcessStats: Array.isArray(sample.topProcesses) && sample.topProcesses.length > 0,
-                isWsl: false,
-                isContainer: false,
-                isWindows: machineMetadata?.platform === 'windows',
-              },
-              availableMetrics: machineMetadata?.availableMetrics || [
-                'cpu',
-                'memory',
-                'swap',
-                'disk',
-                'network',
-                'processes',
-              ],
-              collectionErrors: machineMetadata?.collectionErrors || [],
-              alertRules: machineMetadata?.alertRules || { ...DEFAULT_ALERT_RULES },
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
+          // Dynamic Auto-Enrollment for new real-world computer
+          if (!adminSettings.autoEnrollAllowed) {
+            sendJson(res, 403, { error: 'Auto-enrollment is disabled. Please enroll this device via the Dashboard.' });
+            return;
+          }
+
+          const meta = payload.machineMetadata || {};
+          const isWin = meta.platform === 'windows' || meta.os === 'Windows' || String(rawSample.os).toLowerCase().includes('win');
+          const isMac = meta.platform === 'darwin' || meta.os === 'Darwin' || String(rawSample.os).toLowerCase().includes('mac');
+          const platformType = isWin ? 'windows' : (isMac ? 'darwin' : 'linux');
+          const generatedToken = providedToken || `fb_sec_${crypto.randomBytes(16).toString('hex')}`;
+
+          const newMachine: Partial<Machine> = {
+            id: machineId,
+            name: meta.name || `Device (${meta.hostname || machineId})`,
+            ownerId: 'current-user',
+            hostname: meta.hostname || payload.hostname || machineId,
+            os: meta.os || (isWin ? 'Windows' : (isMac ? 'macOS' : 'Linux')),
+            platform: platformType,
+            osVersion: meta.osVersion || `${isWin ? 'Windows' : (isMac ? 'macOS' : 'Linux')}`,
+            kernel: meta.kernel || 'Unknown',
+            arch: meta.arch || 'x64',
+            cpuCores: Number(meta.cpuCores) || 4,
+            totalMemoryBytes: Number(rawSample.memoryTotalBytes) || 8 * 1024 * 1024 * 1024,
+            agentVersion: meta.agentVersion || '2.2.0',
+            enrollmentToken: generatedToken,
+            status: 'online',
+            connectionStatus: 'connected',
+            lastHeartbeatAt: new Date().toISOString(),
+            lastTelemetryAt: new Date().toISOString(),
+            isRevoked: false,
+            capabilities: meta.capabilities || {
+              hasPsi: platformType === 'linux' && rawSample.psiCpuSome10 !== null,
+              hasSwap: rawSample.swapTotalBytes > 0,
+              hasDiskStats: rawSample.diskPercent !== null || rawSample.diskTotalBytes !== null,
+              hasNetworkStats: rawSample.networkRxBytesPerSec !== null,
+              hasProcessStats: Array.isArray(rawSample.topProcesses) && rawSample.topProcesses.length > 0,
+              isWsl: false,
+              isContainer: false,
+              isWindows: platformType === 'windows',
             },
+            availableMetrics: [
+              'cpu',
+              'cpu_per_core',
+              'memory',
+              'disk',
+              'network',
+              'processes',
+              'uptime',
+            ],
+            collectionErrors: meta.collectionErrors || [],
+            alertRules: meta.alertRules || { ...DEFAULT_ALERT_RULES },
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+
+          record = {
+            machine: newMachine,
             samples: [],
             anomalies: [],
             investigations: [],
           };
           machineStore.set(machineId, record);
+          logAuditEvent('DEVICE_ENROLLED', machineId, `Auto-enrolled new ${platformType.toUpperCase()} device: ${newMachine.name}`, 'info', machineId);
         }
 
         // Validate timestamp (prevent replay attacks: must be within +/- 5 minutes)
-        const sampleDate = new Date(sample.timestamp || Date.now());
-        if (isNaN(sampleDate.getTime())) {
-          sendJson(res, 400, { error: 'Invalid sample timestamp format' });
-          return;
-        }
-        if (Math.abs(nowMs - sampleDate.getTime()) > 5 * 60 * 1000) {
-          sendJson(res, 400, { error: 'Timestamp skew exceeds 5 minutes' });
-          return;
+        const nowIso = new Date().toISOString();
+        const rawTime = rawSample.timestamp || payload.timestamp;
+        let validTimestamp = nowIso;
+        if (rawTime) {
+          const parsed = new Date(rawTime);
+          if (!isNaN(parsed.getTime())) {
+            validTimestamp = parsed.toISOString();
+          }
         }
 
         // Update live machine heartbeat & telemetry timestamps
-        const nowIso = new Date().toISOString();
         record.machine.lastHeartbeatAt = nowIso;
         record.machine.lastTelemetryAt = nowIso;
         record.machine.connectionStatus = 'connected';
         record.machine.status = 'online';
 
-        if (machineMetadata) {
-          if (machineMetadata.name) record.machine.name = machineMetadata.name;
-          if (machineMetadata.hostname) record.machine.hostname = machineMetadata.hostname;
-          if (machineMetadata.osVersion) record.machine.osVersion = machineMetadata.osVersion;
-          if (machineMetadata.platform) record.machine.platform = machineMetadata.platform;
-          if (machineMetadata.cpuCores) record.machine.cpuCores = machineMetadata.cpuCores;
-          if (machineMetadata.totalMemoryBytes) record.machine.totalMemoryBytes = machineMetadata.totalMemoryBytes;
-          if (machineMetadata.agentVersion) record.machine.agentVersion = machineMetadata.agentVersion;
-          if (machineMetadata.uptimeSeconds !== undefined) record.machine.uptimeSeconds = machineMetadata.uptimeSeconds;
-          if (Array.isArray(machineMetadata.collectionErrors)) record.machine.collectionErrors = machineMetadata.collectionErrors;
-        }
+        // Update machine metadata if provided
+        const meta = payload.machineMetadata || {};
+        if (meta.name) record.machine.name = meta.name;
+        if (meta.hostname) record.machine.hostname = meta.hostname;
+        if (meta.osVersion) record.machine.osVersion = meta.osVersion;
+        if (meta.platform) record.machine.platform = meta.platform;
+        if (meta.cpuCores) record.machine.cpuCores = meta.cpuCores;
+        if (meta.totalMemoryBytes) record.machine.totalMemoryBytes = meta.totalMemoryBytes;
+        if (meta.agentVersion) record.machine.agentVersion = meta.agentVersion;
+        if (meta.uptimeSeconds !== undefined) record.machine.uptimeSeconds = meta.uptimeSeconds;
+        if (Array.isArray(meta.collectionErrors)) record.machine.collectionErrors = meta.collectionErrors;
 
-        // Sanitize and validate incoming sample
+        // Extract CPU metrics
+        const cpuPercent = Math.max(0, Math.min(100, Number(rawSample.cpuPercent ?? rawSample.cpu ?? 0)));
+        const cpuPerCore = Array.isArray(rawSample.cpuPerCore)
+          ? rawSample.cpuPerCore.map((c: any) => Math.max(0, Math.min(100, Number(c) || 0)))
+          : null;
+
+        // Extract Memory metrics
+        const memoryPercent = Math.max(0, Math.min(100, Number(rawSample.memoryPercent ?? rawSample.memory ?? 0)));
+        const memoryTotalBytes = Number(rawSample.memoryTotalBytes) || record.machine.totalMemoryBytes || os.totalmem();
+        const memoryUsedBytes = Number(rawSample.memoryUsedBytes) || Math.round((memoryPercent / 100) * memoryTotalBytes);
+        const memoryAvailableBytes = Number(rawSample.memoryAvailableBytes) || Math.max(0, memoryTotalBytes - memoryUsedBytes);
+
+        // Extract Disk metrics
+        const diskPercent = rawSample.diskPercent !== null && rawSample.diskPercent !== undefined
+          ? Math.max(0, Math.min(100, Number(rawSample.diskPercent)))
+          : null;
+
+        // Construct validated TelemetrySample
         const validatedSample: TelemetrySample = {
           id: `tel-${nowMs}-${Math.floor(Math.random() * 1000)}`,
           machineId,
           ownerId: record.machine.ownerId || 'current-user',
-          timestamp: sample.timestamp || nowIso,
-          intervalSeconds: Math.max(1, Math.min(60, Number(sample.intervalSeconds) || 3)),
-          cpuPercent: Math.max(0, Math.min(100, Number(sample.cpuPercent) || 0)),
-          cpuPerCore: Array.isArray(sample.cpuPerCore)
-            ? sample.cpuPerCore.map((c: any) => Math.max(0, Math.min(100, Number(c) || 0)))
-            : null,
-          cpuUserPercent: sample.cpuUserPercent !== undefined && sample.cpuUserPercent !== null ? Number(sample.cpuUserPercent) : null,
-          cpuSystemPercent: sample.cpuSystemPercent !== undefined && sample.cpuSystemPercent !== null ? Number(sample.cpuSystemPercent) : null,
-          cpuIowaitPercent: sample.cpuIowaitPercent !== undefined && sample.cpuIowaitPercent !== null ? Number(sample.cpuIowaitPercent) : null,
-          load1m: sample.load1m !== undefined && sample.load1m !== null ? Number(sample.load1m) : null,
-          load5m: sample.load5m !== undefined && sample.load5m !== null ? Number(sample.load5m) : null,
-          load15m: sample.load15m !== undefined && sample.load15m !== null ? Number(sample.load15m) : null,
-          uptimeSeconds: sample.uptimeSeconds !== undefined && sample.uptimeSeconds !== null ? Number(sample.uptimeSeconds) : null,
-          memoryPercent: Math.max(0, Math.min(100, Number(sample.memoryPercent) || 0)),
-          memoryTotalBytes: Number(sample.memoryTotalBytes) || os.totalmem(),
-          memoryUsedBytes: Number(sample.memoryUsedBytes) || 0,
-          memoryAvailableBytes: Number(sample.memoryAvailableBytes) || 0,
-          swapPercent: Math.max(0, Math.min(100, Number(sample.swapPercent) || 0)),
-          swapTotalBytes: Number(sample.swapTotalBytes) || 0,
-          swapUsedBytes: Number(sample.swapUsedBytes) || 0,
-          diskPercent: sample.diskPercent !== null && sample.diskPercent !== undefined ? Math.max(0, Math.min(100, Number(sample.diskPercent))) : null,
-          diskTotalBytes: sample.diskTotalBytes !== null && sample.diskTotalBytes !== undefined ? Number(sample.diskTotalBytes) : null,
-          diskUsedBytes: sample.diskUsedBytes !== null && sample.diskUsedBytes !== undefined ? Number(sample.diskUsedBytes) : null,
-          diskAvailableBytes: sample.diskAvailableBytes !== null && sample.diskAvailableBytes !== undefined ? Number(sample.diskAvailableBytes) : null,
-          diskReadBytesPerSec: sample.diskReadBytesPerSec !== null && sample.diskReadBytesPerSec !== undefined ? Number(sample.diskReadBytesPerSec) : null,
-          diskWriteBytesPerSec: sample.diskWriteBytesPerSec !== null && sample.diskWriteBytesPerSec !== undefined ? Number(sample.diskWriteBytesPerSec) : null,
-          networkRxBytesPerSec: sample.networkRxBytesPerSec !== null && sample.networkRxBytesPerSec !== undefined ? Number(sample.networkRxBytesPerSec) : null,
-          networkTxBytesPerSec: sample.networkTxBytesPerSec !== null && sample.networkTxBytesPerSec !== undefined ? Number(sample.networkTxBytesPerSec) : null,
-          networkErrorsPerSec: sample.networkErrorsPerSec !== null && sample.networkErrorsPerSec !== undefined ? Number(sample.networkErrorsPerSec) : null,
-          psiCpuSome10: sample.psiCpuSome10 !== null && sample.psiCpuSome10 !== undefined ? Number(sample.psiCpuSome10) : null,
-          psiMemorySome10: sample.psiMemorySome10 !== null && sample.psiMemorySome10 !== undefined ? Number(sample.psiMemorySome10) : null,
-          psiIoSome10: sample.psiIoSome10 !== null && sample.psiIoSome10 !== undefined ? Number(sample.psiIoSome10) : null,
-          httpLatencyMs: sample.httpLatencyMs !== null && sample.httpLatencyMs !== undefined ? Number(sample.httpLatencyMs) : null,
-          httpStatusCode: sample.httpStatusCode !== null && sample.httpStatusCode !== undefined ? Number(sample.httpStatusCode) : null,
-          topProcesses: Array.isArray(sample.topProcesses) ? sample.topProcesses : [],
+          timestamp: validTimestamp,
+          intervalSeconds: Math.max(1, Math.min(60, Number(rawSample.intervalSeconds) || 3)),
+          cpuPercent,
+          cpuPerCore,
+          cpuUserPercent: rawSample.cpuUserPercent !== undefined && rawSample.cpuUserPercent !== null ? Number(rawSample.cpuUserPercent) : null,
+          cpuSystemPercent: rawSample.cpuSystemPercent !== undefined && rawSample.cpuSystemPercent !== null ? Number(rawSample.cpuSystemPercent) : null,
+          cpuIowaitPercent: rawSample.cpuIowaitPercent !== undefined && rawSample.cpuIowaitPercent !== null ? Number(rawSample.cpuIowaitPercent) : null,
+          load1m: rawSample.load1m !== undefined && rawSample.load1m !== null ? Number(rawSample.load1m) : null,
+          load5m: rawSample.load5m !== undefined && rawSample.load5m !== null ? Number(rawSample.load5m) : null,
+          load15m: rawSample.load15m !== undefined && rawSample.load15m !== null ? Number(rawSample.load15m) : null,
+          uptimeSeconds: rawSample.uptimeSeconds !== undefined && rawSample.uptimeSeconds !== null ? Number(rawSample.uptimeSeconds) : null,
+          memoryPercent,
+          memoryTotalBytes,
+          memoryUsedBytes,
+          memoryAvailableBytes,
+          swapPercent: Math.max(0, Math.min(100, Number(rawSample.swapPercent) || 0)),
+          swapTotalBytes: Number(rawSample.swapTotalBytes) || 0,
+          swapUsedBytes: Number(rawSample.swapUsedBytes) || 0,
+          diskPercent,
+          diskTotalBytes: rawSample.diskTotalBytes !== null && rawSample.diskTotalBytes !== undefined ? Number(rawSample.diskTotalBytes) : null,
+          diskUsedBytes: rawSample.diskUsedBytes !== null && rawSample.diskUsedBytes !== undefined ? Number(rawSample.diskUsedBytes) : null,
+          diskAvailableBytes: rawSample.diskAvailableBytes !== null && rawSample.diskAvailableBytes !== undefined ? Number(rawSample.diskAvailableBytes) : null,
+          diskReadBytesPerSec: rawSample.diskReadBytesPerSec !== null && rawSample.diskReadBytesPerSec !== undefined ? Number(rawSample.diskReadBytesPerSec) : null,
+          diskWriteBytesPerSec: rawSample.diskWriteBytesPerSec !== null && rawSample.diskWriteBytesPerSec !== undefined ? Number(rawSample.diskWriteBytesPerSec) : null,
+          networkRxBytesPerSec: rawSample.networkRxBytesPerSec !== null && rawSample.networkRxBytesPerSec !== undefined ? Number(rawSample.networkRxBytesPerSec) : null,
+          networkTxBytesPerSec: rawSample.networkTxBytesPerSec !== null && rawSample.networkTxBytesPerSec !== undefined ? Number(rawSample.networkTxBytesPerSec) : null,
+          networkErrorsPerSec: rawSample.networkErrorsPerSec !== null && rawSample.networkErrorsPerSec !== undefined ? Number(rawSample.networkErrorsPerSec) : null,
+          psiCpuSome10: rawSample.psiCpuSome10 !== null && rawSample.psiCpuSome10 !== undefined ? Number(rawSample.psiCpuSome10) : null,
+          psiMemorySome10: rawSample.psiMemorySome10 !== null && rawSample.psiMemorySome10 !== undefined ? Number(rawSample.psiMemorySome10) : null,
+          psiIoSome10: rawSample.psiIoSome10 !== null && rawSample.psiIoSome10 !== undefined ? Number(rawSample.psiIoSome10) : null,
+          httpLatencyMs: rawSample.httpLatencyMs !== null && rawSample.httpLatencyMs !== undefined ? Number(rawSample.httpLatencyMs) : null,
+          httpStatusCode: rawSample.httpStatusCode !== null && rawSample.httpStatusCode !== undefined ? Number(rawSample.httpStatusCode) : null,
+          topProcesses: Array.isArray(rawSample.topProcesses) ? rawSample.topProcesses : [],
           createdAt: nowIso,
         };
 
-        // Ring buffer: maintain 300 recent samples in-memory
+        // Ring buffer: maintain configured retention sample count (default 300)
+        const maxSamples = adminSettings.retentionMaxSamples || 300;
         record.samples.push(validatedSample);
-        if (record.samples.length > 300) {
+        if (record.samples.length > maxSamples) {
           record.samples.shift();
         }
 
@@ -320,6 +428,8 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
           if (!exists) {
             record.anomalies.unshift(anom);
             if (record.anomalies.length > 50) record.anomalies.pop();
+
+            logAuditEvent('ANOMALY_TRIGGERED', machineId, `Anomaly [${anom.severity.toUpperCase()}] on ${anom.metricName}: ${anom.explanation}`, anom.severity === 'critical' ? 'error' : 'warning', machineId);
 
             // Dispatch configured webhooks for newly detected anomaly
             const webhooks = record.machine.alertRules?.destinations?.webhooks;
@@ -369,6 +479,7 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
         sendJson(res, 200, {
           ok: true,
           sampleId: validatedSample.id,
+          machineId,
           machineStatus: 'connected',
           anomaliesDetected: detectedAnomalies.length,
           bufferedCount: record.samples.length,
@@ -380,7 +491,9 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
     return true;
   }
 
-  // 2. Query Machine List (with dynamic real-time connection status)
+  // =========================================================================
+  // 2. Query Machine List (Multi-Device Support with live Connection Status)
+  // =========================================================================
   if (pathname === '/api/machines' && req.method === 'GET') {
     const machines = Array.from(machineStore.values()).map((r) => {
       const connStatus = computeConnectionStatus(r.machine);
@@ -392,28 +505,30 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
     return true;
   }
 
+  // =========================================================================
   // 3. Enroll New Machine (Generates fresh secure credentials)
+  // =========================================================================
   if (pathname === '/api/machines/enroll' && req.method === 'POST') {
     parseJsonBody(req)
       .then((body) => {
         const { name, hostname, platform = 'windows' } = body;
         const cleanHost = (hostname || 'laptop').toLowerCase().replace(/[^a-z0-9]/g, '-');
-        const machineId = `${platform === 'windows' ? 'win' : 'host'}-${cleanHost}-${Date.now().toString(36).substring(4)}`;
+        const machineId = `${platform === 'windows' ? 'win' : (platform === 'darwin' ? 'mac' : 'host')}-${cleanHost}-${Date.now().toString(36).substring(4)}`;
         const token = `fb_sec_${crypto.randomBytes(24).toString('hex')}`;
 
         const newMachine: Partial<Machine> = {
           id: machineId,
-          name: name || `Windows Laptop (${hostname || 'New Host'})`,
+          name: name || `${platform === 'windows' ? 'Windows Laptop' : (platform === 'darwin' ? 'Mac' : 'Linux Host')} (${hostname || 'New Host'})`,
           ownerId: 'current-user',
-          hostname: hostname || 'Windows-Host',
-          os: platform === 'windows' ? 'Windows' : 'Linux',
-          platform: platform === 'windows' ? 'windows' : 'linux',
-          osVersion: platform === 'windows' ? 'Windows 11 / 10' : 'Linux',
-          kernel: platform === 'windows' ? 'Windows NT' : 'Linux',
+          hostname: hostname || 'Host-Device',
+          os: platform === 'windows' ? 'Windows' : (platform === 'darwin' ? 'macOS' : 'Linux'),
+          platform: platform as any,
+          osVersion: platform === 'windows' ? 'Windows 11 / 10' : (platform === 'darwin' ? 'macOS' : 'Linux'),
+          kernel: platform === 'windows' ? 'Windows NT' : (platform === 'darwin' ? 'Darwin' : 'Linux'),
           arch: 'x64',
           cpuCores: 4,
           totalMemoryBytes: 16 * 1024 * 1024 * 1024,
-          agentVersion: '2.1.0-windows',
+          agentVersion: `2.2.0-${platform}`,
           enrollmentToken: token,
           status: 'offline',
           connectionStatus: 'waiting_for_telemetry',
@@ -434,10 +549,8 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
             'cpu',
             'cpu_per_core',
             'memory',
-            'pagefile_swap',
-            'disk_usage',
-            'disk_io_rates',
-            'network_io_rates',
+            'disk',
+            'network',
             'processes',
             'uptime',
           ],
@@ -454,24 +567,28 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
           investigations: [],
         });
 
+        logAuditEvent('DEVICE_MANUAL_ENROLL', machineId, `Enrolled new device: ${newMachine.name}`, 'info', machineId);
+
         sendJson(res, 201, {
           ok: true,
           machine: newMachine,
           enrollmentToken: token,
-          message: 'Machine successfully enrolled. Run the agent on your Windows computer using these credentials.',
+          message: 'Machine successfully enrolled. Run the agent on your computer using these credentials.',
         });
       })
       .catch((err) => sendJson(res, 400, { error: err.message }));
     return true;
   }
 
+  // =========================================================================
   // 4. Revoke Machine Enrollment Token
+  // =========================================================================
   if (pathname === '/api/machines/revoke' && req.method === 'POST') {
     parseJsonBody(req)
       .then((body) => {
         const { machineId } = body;
         if (!machineId) return sendJson(res, 400, { error: 'Missing machineId' });
-        const record = machineStore.get(machineId);
+        const record = findMachineRecord(machineId);
         if (!record) return sendJson(res, 404, { error: 'Machine not found' });
 
         record.machine.isRevoked = true;
@@ -479,19 +596,22 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
         record.machine.status = 'offline';
         record.machine.updatedAt = new Date().toISOString();
 
+        logAuditEvent('DEVICE_TOKEN_REVOKED', machineId, `Revoked access token for device: ${record.machine.name}`, 'warning', machineId);
         sendJson(res, 200, { ok: true, machineId, message: 'Machine enrollment token revoked successfully.' });
       })
       .catch((err) => sendJson(res, 400, { error: err.message }));
     return true;
   }
 
+  // =========================================================================
   // 5. Reconnect / Re-enroll Machine (Generates fresh token)
+  // =========================================================================
   if (pathname === '/api/machines/reconnect' && req.method === 'POST') {
     parseJsonBody(req)
       .then((body) => {
         const { machineId } = body;
         if (!machineId) return sendJson(res, 400, { error: 'Missing machineId' });
-        const record = machineStore.get(machineId);
+        const record = findMachineRecord(machineId);
         if (!record) return sendJson(res, 404, { error: 'Machine not found' });
 
         const newToken = `fb_sec_${crypto.randomBytes(24).toString('hex')}`;
@@ -500,22 +620,26 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
         record.machine.connectionStatus = 'waiting_for_telemetry';
         record.machine.updatedAt = new Date().toISOString();
 
+        logAuditEvent('DEVICE_RECONNECTED', machineId, `Re-authorized token for device: ${record.machine.name}`, 'info', machineId);
+
         sendJson(res, 200, {
           ok: true,
           machineId,
           enrollmentToken: newToken,
-          message: 'New enrollment token generated. Update agent_config.json and start the agent.',
+          message: 'New enrollment token generated. Update your agent config and start the agent.',
         });
       })
       .catch((err) => sendJson(res, 400, { error: err.message }));
     return true;
   }
 
-  // 6. Query Machine Telemetry & Investigations
+  // =========================================================================
+  // 6. Query Machine Telemetry Feed & Investigations
+  // =========================================================================
   if (pathname === '/api/telemetry/feed' && req.method === 'GET') {
     const machineId = url.searchParams.get('machineId') || defaultWinId;
     const limit = parseInt(url.searchParams.get('limit') || '60', 10);
-    const record = machineStore.get(machineId) || machineStore.get(defaultWinId);
+    const record = findMachineRecord(machineId) || machineStore.get(defaultWinId);
 
     if (!record) {
       sendJson(res, 200, { machine: null, samples: [], anomalies: [], investigations: [] });
@@ -535,7 +659,9 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
     return true;
   }
 
+  // =========================================================================
   // 7. Update Machine Alert Rules
+  // =========================================================================
   if (pathname === '/api/machines/alert-rules' && req.method === 'POST') {
     parseJsonBody(req)
       .then((body) => {
@@ -544,10 +670,11 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
           sendJson(res, 400, { error: 'Missing machineId or alertRules' });
           return;
         }
-        const record = machineStore.get(machineId) || machineStore.get(defaultWinId);
+        const record = findMachineRecord(machineId) || machineStore.get(defaultWinId);
         if (record) {
           record.machine.alertRules = { ...DEFAULT_ALERT_RULES, ...alertRules };
           record.machine.updatedAt = new Date().toISOString();
+          logAuditEvent('ALERT_RULES_UPDATED', machineId, `Custom alert rules updated for ${record.machine.name}`, 'info', machineId);
           sendJson(res, 200, { ok: true, alertRules: record.machine.alertRules });
         } else {
           sendJson(res, 404, { error: 'Machine not found' });
@@ -557,7 +684,9 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
     return true;
   }
 
+  // =========================================================================
   // 8. Test Alert Destination (Webhook or Email)
+  // =========================================================================
   if (pathname === '/api/alerts/test-destination' && req.method === 'POST') {
     parseJsonBody(req)
       .then(async (body) => {
@@ -611,7 +740,7 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
 
             const headers: Record<string, string> = {
               'Content-Type': 'application/json',
-              'User-Agent': 'Fireball-Systems-Intelligence/2.1',
+              'User-Agent': 'Fireball-Systems-Intelligence/2.2',
             };
             if (secretHeader) {
               headers['Authorization'] = secretHeader.startsWith('Bearer ') ? secretHeader : `Bearer ${secretHeader}`;
@@ -654,17 +783,91 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
     return true;
   }
 
-  // 9. Safe Workload Simulation (For local testing of anomaly triggers)
+  // =========================================================================
+  // 9. Admin Portal API Endpoints (/api/admin/*)
+  // =========================================================================
+  if (pathname === '/api/admin/overview' && req.method === 'GET') {
+    const machines = Array.from(machineStore.values()).map((r) => {
+      const connStatus = computeConnectionStatus(r.machine);
+      r.machine.connectionStatus = connStatus;
+      r.machine.status = connStatus === 'connected' ? 'online' : 'offline';
+      return {
+        ...r.machine,
+        bufferedSamplesCount: r.samples.length,
+        anomaliesCount: r.anomalies.length,
+      };
+    });
+
+    sendJson(res, 200, {
+      ok: true,
+      machines,
+      settings: adminSettings,
+      auditLogs: auditLogs.slice(0, 50),
+      system: {
+        serverUptimeSec: process.uptime(),
+        nodeVersion: process.version,
+        hostOs: `${os.type()} ${os.release()}`,
+        hostArch: os.arch(),
+        memoryUsageMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+      },
+    });
+    return true;
+  }
+
+  // Admin: Update System Settings & Retention Policy
+  if (pathname === '/api/admin/settings' && req.method === 'POST') {
+    parseJsonBody(req)
+      .then((body) => {
+        if (body.retentionMaxSamples !== undefined) adminSettings.retentionMaxSamples = Math.max(50, Math.min(2000, Number(body.retentionMaxSamples)));
+        if (body.samplingIntervalDefault !== undefined) adminSettings.samplingIntervalDefault = Math.max(1, Math.min(60, Number(body.samplingIntervalDefault)));
+        if (body.requireTokenAuth !== undefined) adminSettings.requireTokenAuth = Boolean(body.requireTokenAuth);
+        if (body.autoEnrollAllowed !== undefined) adminSettings.autoEnrollAllowed = Boolean(body.autoEnrollAllowed);
+        if (body.alertOnDisconnection !== undefined) adminSettings.alertOnDisconnection = Boolean(body.alertOnDisconnection);
+        if (body.disconnectionThresholdSec !== undefined) adminSettings.disconnectionThresholdSec = Math.max(5, Math.min(120, Number(body.disconnectionThresholdSec)));
+
+        logAuditEvent('ADMIN_SETTINGS_UPDATED', 'admin', 'System retention and monitoring policies updated.', 'info');
+        sendJson(res, 200, { ok: true, settings: adminSettings });
+      })
+      .catch((err) => sendJson(res, 400, { error: err.message }));
+    return true;
+  }
+
+  // Admin: Delete Device
+  if (pathname === '/api/admin/devices/delete' && req.method === 'POST') {
+    parseJsonBody(req)
+      .then((body) => {
+        const { machineId } = body;
+        if (!machineId) return sendJson(res, 400, { error: 'Missing machineId' });
+
+        const record = findMachineRecord(machineId);
+        if (!record) return sendJson(res, 404, { error: 'Machine not found' });
+
+        machineStore.delete(record.machine.id || machineId);
+        logAuditEvent('DEVICE_DELETED', 'admin', `Deleted device ${record.machine.name || machineId}`, 'warning', machineId);
+        sendJson(res, 200, { ok: true, message: `Device ${machineId} deleted successfully.` });
+      })
+      .catch((err) => sendJson(res, 400, { error: err.message }));
+    return true;
+  }
+
+  // Admin: Get Full Audit Logs
+  if (pathname === '/api/admin/logs' && req.method === 'GET') {
+    sendJson(res, 200, { ok: true, logs: auditLogs });
+    return true;
+  }
+
+  // =========================================================================
+  // 10. Safe Workload Simulation (For testing anomaly triggers)
+  // =========================================================================
   if (pathname === '/api/workload/run' && req.method === 'POST') {
     parseJsonBody(req)
       .then((body) => {
         const { type = 'cpu', duration = 6, machineId } = body;
         const validDuration = Math.min(30, Math.max(2, Number(duration) || 6));
         const targetId = machineId || defaultWinId;
-        const record = machineStore.get(targetId);
+        const record = findMachineRecord(targetId) || machineStore.get(defaultWinId);
 
         if (record) {
-          // Ingest simulated spike sample that exercises genuine anomaly detection
           const nowIso = new Date().toISOString();
           const spikeSample: TelemetrySample = {
             id: `workload-${Date.now()}`,

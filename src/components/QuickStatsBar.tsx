@@ -17,7 +17,7 @@ export const QuickStatsBar: React.FC<QuickStatsBarProps> = ({
 
   const cpuPercent = latestSample?.cpuPercent ?? 0;
   const memPercent = latestSample?.memoryPercent ?? 0;
-  const diskPercent = latestSample?.diskPercent ?? 34.2;
+  const diskPercent = latestSample?.diskPercent ?? 0;
 
   const formatBytes = (bytes: number | null | undefined, unit: 'MB' | 'GB' = 'GB') => {
     if (bytes === null || bytes === undefined) return '--';
@@ -37,6 +37,9 @@ export const QuickStatsBar: React.FC<QuickStatsBarProps> = ({
     return 'text-emerald-400';
   };
 
+  const isWin = machine?.platform === 'windows' || machine?.os?.toLowerCase().includes('win');
+  const isMac = machine?.platform === 'darwin' || machine?.os?.toLowerCase().includes('mac');
+
   return (
     <div className="border-b border-zinc-800/90 bg-zinc-900/60 backdrop-blur-md px-4 py-2.5">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
@@ -55,12 +58,12 @@ export const QuickStatsBar: React.FC<QuickStatsBarProps> = ({
               <div className="w-full bg-zinc-800/80 rounded-full h-1.5 overflow-hidden">
                 <div
                   className={`h-full transition-all duration-300 rounded-full ${getBarColor(cpuPercent, 75, 90)}`}
-                  style={{ width: `${Math.min(100, Math.max(2, cpuPercent))}%` }}
+                  style={{ width: `${latestSample ? Math.min(100, Math.max(2, cpuPercent)) : 0}%` }}
                 />
               </div>
               <div className="flex items-center justify-between text-[9px] font-mono text-zinc-500 mt-1 leading-none">
-                <span>1m: {latestSample?.load1m ?? '--'}</span>
-                <span>sys: {latestSample?.cpuSystemPercent?.toFixed(0) ?? '0'}%</span>
+                <span>{latestSample?.load1m !== null && latestSample?.load1m !== undefined ? `1m: ${latestSample.load1m}` : `${machine?.cpuCores || 4} Cores`}</span>
+                <span>sys: {latestSample?.cpuSystemPercent?.toFixed(0) ?? '--'}%</span>
               </div>
             </div>
           </div>
@@ -78,12 +81,12 @@ export const QuickStatsBar: React.FC<QuickStatsBarProps> = ({
               <div className="w-full bg-zinc-800/80 rounded-full h-1.5 overflow-hidden">
                 <div
                   className={`h-full transition-all duration-300 rounded-full ${getBarColor(memPercent, 80, 90)}`}
-                  style={{ width: `${Math.min(100, Math.max(2, memPercent))}%` }}
+                  style={{ width: `${latestSample ? Math.min(100, Math.max(2, memPercent)) : 0}%` }}
                 />
               </div>
               <div className="flex items-center justify-between text-[9px] font-mono text-zinc-500 mt-1 leading-none">
-                <span>{formatBytes(latestSample?.memoryUsedBytes)} used</span>
-                <span>{formatBytes(latestSample?.memoryTotalBytes)} total</span>
+                <span>{latestSample ? formatBytes(latestSample.memoryUsedBytes) : '--'} used</span>
+                <span>{formatBytes(latestSample?.memoryTotalBytes ?? machine?.totalMemoryBytes)} total</span>
               </div>
             </div>
           </div>
@@ -95,18 +98,18 @@ export const QuickStatsBar: React.FC<QuickStatsBarProps> = ({
               <div className="flex items-center justify-between text-[11px] font-mono leading-none mb-1">
                 <span className="text-zinc-400 font-semibold">DISK USAGE</span>
                 <span className={`font-bold ${getTextColor(diskPercent, 80, 90)}`}>
-                  {diskPercent.toFixed(1)}%
+                  {latestSample && latestSample.diskPercent !== null && latestSample.diskPercent !== undefined ? `${latestSample.diskPercent.toFixed(1)}%` : '--'}
                 </span>
               </div>
               <div className="w-full bg-zinc-800/80 rounded-full h-1.5 overflow-hidden">
                 <div
                   className={`h-full transition-all duration-300 rounded-full ${getBarColor(diskPercent, 80, 90)}`}
-                  style={{ width: `${Math.min(100, Math.max(2, diskPercent))}%` }}
+                  style={{ width: `${latestSample && latestSample.diskPercent ? Math.min(100, Math.max(2, diskPercent)) : 0}%` }}
                 />
               </div>
               <div className="flex items-center justify-between text-[9px] font-mono text-zinc-500 mt-1 leading-none">
-                <span>{formatBytes(latestSample?.diskAvailableBytes ?? 65.8 * 1024 * 1024 * 1024)} free</span>
-                <span>{formatBytes(latestSample?.diskTotalBytes ?? 100 * 1024 * 1024 * 1024)} root</span>
+                <span>{latestSample?.diskAvailableBytes ? `${formatBytes(latestSample.diskAvailableBytes, 'GB')} free` : '-- free'}</span>
+                <span>{latestSample?.diskTotalBytes ? `${formatBytes(latestSample.diskTotalBytes, 'GB')} total` : '-- total'}</span>
               </div>
             </div>
           </div>
@@ -125,13 +128,16 @@ export const QuickStatsBar: React.FC<QuickStatsBarProps> = ({
               </span>
             ) : (
               <span className="text-emerald-400 font-medium">
-                Systems Nominal
+                {latestSample ? 'Systems Nominal' : 'Waiting for Telemetry'}
               </span>
             )}
           </div>
 
-          <div className="text-[10px] text-zinc-500">
-            Host: <span className="text-zinc-300 font-semibold">{machine?.hostname || 'localhost'}</span>
+          <div className="text-[10px] text-zinc-500 flex items-center gap-1.5">
+            <span className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 font-bold">
+              {isWin ? 'Windows' : isMac ? 'macOS' : 'Linux'}
+            </span>
+            <span className="text-zinc-300 font-semibold">{machine?.hostname || machine?.id || 'host'}</span>
           </div>
         </div>
       </div>

@@ -23,10 +23,11 @@ import { AnomaliesTab } from './components/AnomaliesTab';
 import { InvestigationsTab } from './components/InvestigationsTab';
 import { ExperimentsTab } from './components/ExperimentsTab';
 import { AgentTab } from './components/AgentTab';
+import { AdminTab } from './components/AdminTab';
 import { QuickStatsBar } from './components/QuickStatsBar';
 import { ReportModal } from './components/ReportModal';
 
-type TabType = 'overview' | 'performance' | 'anomalies' | 'investigations' | 'experiments' | 'agent';
+type TabType = 'overview' | 'performance' | 'anomalies' | 'investigations' | 'experiments' | 'agent' | 'admin';
 
 export default function App() {
   const { user, signInWithGoogle, signOut, isFirebaseConnected } = useAuth();
@@ -81,15 +82,25 @@ export default function App() {
         const data = await res.json();
         if (Array.isArray(data.machines) && data.machines.length > 0) {
           setMachines(data.machines);
-          if (!selectedMachineId && data.machines[0]?.id) {
-            setSelectedMachineId(data.machines[0].id);
-          }
+          setSelectedMachineId((current) => {
+            const exists = data.machines.some((m: Machine) => m.id === current);
+            if (exists) return current;
+            const connected = data.machines.find((m: Machine) => m.connectionStatus === 'connected');
+            return connected ? connected.id : data.machines[0].id;
+          });
         }
       }
     } catch (err) {
       console.warn('Machines fetch error:', err);
     }
-  }, [selectedMachineId]);
+  }, []);
+
+  // Check URL path/hash on mount for direct /admin navigation
+  useEffect(() => {
+    if (window.location.pathname === '/admin' || window.location.hash === '#admin') {
+      setActiveTab('admin');
+    }
+  }, []);
 
   // Polling loop when live
   useEffect(() => {
@@ -347,7 +358,19 @@ export default function App() {
             }`}
           >
             <Terminal className="w-3.5 h-3.5" />
-            <span>Linux Agent & Enrollment</span>
+            <span>Cross-Platform Agent</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('admin')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-colors shrink-0 ${
+              activeTab === 'admin'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+            }`}
+          >
+            <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            <span>Admin Portal</span>
           </button>
         </div>
       </nav>
@@ -413,6 +436,13 @@ export default function App() {
             onRefreshMachine={fetchMachines}
             onUpdateAlertRules={handleUpdateAlertRules}
             onTriggerWorkload={handleTriggerWorkload}
+          />
+        )}
+
+        {activeTab === 'admin' && (
+          <AdminTab
+            machines={machines}
+            onRefreshMachines={fetchMachines}
           />
         )}
       </main>

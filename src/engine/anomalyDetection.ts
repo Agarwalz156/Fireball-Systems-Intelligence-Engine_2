@@ -54,7 +54,9 @@ export function detectAnomalies(
   const latest = sorted[sorted.length - 1];
   const detected: Anomaly[] = [];
 
-  const timeWindow = `${sorted[0].timestamp.substring(11, 19)} - ${latest.timestamp.substring(11, 19)}`;
+  const startTime = (sorted[0]?.timestamp || new Date().toISOString()).substring(11, 19);
+  const endTime = (latest?.timestamp || new Date().toISOString()).substring(11, 19);
+  const timeWindow = `${startTime} - ${endTime}`;
 
   // 1. Sustained High CPU Utilization
   const recentWindow = sorted.slice(-config.cpuSustainedSamples);

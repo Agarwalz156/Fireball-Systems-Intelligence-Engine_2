@@ -1,16 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Activity,
   Cpu,
   HardDrive,
   Network,
   AlertTriangle,
-  CheckCircle,
-  HelpCircle,
   Play,
   RotateCw,
+  Clock,
+  Terminal,
+  Copy,
+  Check,
+  HelpCircle,
+  Radio,
+  Layers,
+  ArrowDownRight,
+  ArrowUpRight,
 } from 'lucide-react';
-import { Machine, TelemetrySample, Anomaly } from '../types/telemetry';
+import { Machine, TelemetrySample, Anomaly, MachineConnectionStatus } from '../types/telemetry';
 
 interface OverviewTabProps {
   machine: Machine | null;
@@ -29,6 +36,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   onSampleLocal,
   isSampling,
 }) => {
+  const [copiedCmd, setCopiedCmd] = useState(false);
   const activeAnomalies = anomalies.filter((a) => a.status === 'active');
 
   const formatBytes = (bytes: number | null | undefined, unit: 'MB' | 'GB' = 'MB') => {
@@ -38,36 +46,107 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   };
 
   const formatRate = (bytesSec: number | null | undefined) => {
-    if (bytesSec === null || bytesSec === undefined) return 'N/A';
+    if (bytesSec === null || bytesSec === undefined) return '0.0 KB/s';
     if (bytesSec >= 1024 * 1024) return (bytesSec / (1024 * 1024)).toFixed(1) + ' MB/s';
-    return (bytesSec / 1024).toFixed(0) + ' KB/s';
+    return (bytesSec / 1024).toFixed(1) + ' KB/s';
+  };
+
+  const formatUptime = (seconds: number | null | undefined) => {
+    if (!seconds) return 'N/A';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${Math.floor(seconds)}s`;
+  };
+
+  const getStatusBadge = (status?: MachineConnectionStatus) => {
+    switch (status) {
+      case 'connected':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+            Live Connected
+          </span>
+        );
+      case 'waiting_for_telemetry':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            Waiting for Telemetry
+          </span>
+        );
+      case 'auth_failed':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-red-500/15 text-red-400 border border-red-500/30">
+            Token Revoked
+          </span>
+        );
+      case 'agent_error':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/30">
+            Agent Error
+          </span>
+        );
+      case 'disconnected':
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
+            <span className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
+            Disconnected
+          </span>
+        );
+    }
+  };
+
+  const isWindows = machine?.platform === 'windows' || machine?.os?.toLowerCase().includes('win');
+  const isMac = machine?.platform === 'darwin' || machine?.os?.toLowerCase().includes('mac');
+  const isLinux = !isWindows && !isMac;
+
+  const targetCmd = `python scripts/windows_monitor.py --machine-id "${machine?.id || 'win-primary'}" --token "${machine?.enrollmentToken || 'fb_win_token_primary'}" --url "${window.location.origin}/api/telemetry"`;
+
+  const copyCommand = () => {
+    navigator.clipboard.writeText(targetCmd);
+    setCopiedCmd(true);
+    setTimeout(() => setCopiedCmd(false), 2000);
   };
 
   return (
     <div className="space-y-6">
       {/* Top Host Status & Capabilities Strip */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border border-zinc-800 bg-zinc-900/70">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border border-zinc-800 bg-zinc-900/80">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <div className="w-3.5 h-3.5 rounded-full bg-emerald-500" />
-            <div className="absolute inset-0 w-3.5 h-3.5 rounded-full bg-emerald-500 animate-ping opacity-50" />
+            <div className={`w-3.5 h-3.5 rounded-full ${
+              machine?.connectionStatus === 'connected' ? 'bg-emerald-500' : 'bg-amber-500'
+            }`} />
+            {machine?.connectionStatus === 'connected' && (
+              <div className="absolute inset-0 w-3.5 h-3.5 rounded-full bg-emerald-500 animate-ping opacity-50" />
+            )}
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-zinc-100 text-sm">
-                {machine?.hostname || 'Linux Host'}
+              <span className="font-semibold text-zinc-100 text-sm font-mono">
+                {machine?.name || machine?.hostname || 'Primary Host'}
               </span>
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-zinc-800 text-zinc-300">
-                {machine?.kernel || 'Linux'}
+
+              {/* OS / Platform Tag */}
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-800 text-zinc-200 border border-zinc-700">
+                {isWindows ? '🪟 Windows' : isMac ? '🍎 macOS' : '🐧 Linux'}
               </span>
+
               {machine?.capabilities?.isWsl && (
                 <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-blue-900/50 text-blue-300 border border-blue-700/50">
                   WSL2
                 </span>
               )}
+
+              {getStatusBadge(machine?.connectionStatus)}
             </div>
+
             <p className="text-xs text-zinc-400 font-mono mt-0.5">
-              Cores: {machine?.cpuCores || 2} | RAM: {formatBytes(machine?.totalMemoryBytes, 'GB')} | Agent: v{machine?.agentVersion || '1.0.0'}
+              Host: <span className="text-zinc-300">{machine?.hostname}</span> ({machine?.id}) | Cores: {machine?.cpuCores || 4} | RAM: {formatBytes(machine?.totalMemoryBytes, 'GB')} | Uptime: {formatUptime(latestSample?.uptimeSeconds)}
             </p>
           </div>
         </div>
@@ -76,16 +155,16 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           <button
             onClick={onSampleLocal}
             disabled={isSampling}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-medium text-zinc-200 transition-colors disabled:opacity-50"
-            title="Polls local host /proc metrics immediately"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-zinc-200 transition-colors disabled:opacity-50"
+            title="Polls local host metrics immediately"
           >
             <RotateCw className={`w-3.5 h-3.5 ${isSampling ? 'animate-spin' : ''}`} />
-            {isSampling ? 'Sampling...' : 'Sample Local Host'}
+            {isSampling ? 'Sampling...' : 'Poll Metrics'}
           </button>
 
           <button
             onClick={() => onTriggerWorkload('cpu')}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-600/40 bg-amber-500/10 hover:bg-amber-500/20 text-xs font-medium text-amber-300 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-600/40 bg-amber-500/10 hover:bg-amber-500/20 text-xs font-mono font-medium text-amber-300 transition-colors"
             title="Starts safe 10-second bounded CPU workload to test anomaly detection"
           >
             <Play className="w-3.5 h-3.5" />
@@ -100,7 +179,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
             <div className="flex-1">
-              <h4 className="text-sm font-semibold text-red-200">
+              <h4 className="text-sm font-semibold text-red-200 font-mono">
                 {activeAnomalies.length} Active Performance Anomaly Detected
               </h4>
               <div className="mt-2 space-y-2">
@@ -126,163 +205,260 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </div>
       )}
 
-      {/* Core Subsystem Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* CPU Card */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">CPU Utilization</span>
-            <Cpu className="w-4 h-4 text-amber-400" />
+      {/* If No Telemetry Sample Received Yet: Render Transparent Waiting Guide (No Fake Fallbacks) */}
+      {!latestSample ? (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-8 text-center space-y-4 font-mono">
+          <div className="w-12 h-12 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+            <Radio className="w-6 h-6 animate-pulse" />
           </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-zinc-100">
-              {latestSample?.cpuPercent?.toFixed(1) ?? '--'}%
-            </span>
-            <span className="text-xs text-zinc-500 font-mono">
-              Load: {latestSample?.load1m ?? '--'}
-            </span>
+
+          <div className="max-w-lg mx-auto space-y-2">
+            <h3 className="text-base font-bold text-zinc-100">
+              Waiting for Telemetry from {machine?.name || machine?.hostname || 'Registered Computer'}
+            </h3>
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              Fireball is configured in real-world live mode. It does not fabricate simulated or fake metrics. To start streaming hardware counters from your laptop, launch the monitoring agent in PowerShell or Terminal:
+            </p>
           </div>
-          <div className="w-full bg-zinc-800 rounded-full h-1.5 mt-3 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ${
-                (latestSample?.cpuPercent || 0) > 85 ? 'bg-red-500' : 'bg-amber-400'
-              }`}
-              style={{ width: `${Math.min(100, latestSample?.cpuPercent || 0)}%` }}
-            />
+
+          <div className="max-w-2xl mx-auto p-3 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-3 text-left">
+            <pre className="text-xs text-amber-300 font-mono overflow-x-auto whitespace-pre-wrap select-all">
+              {targetCmd}
+            </pre>
+            <button
+              onClick={copyCommand}
+              className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono shrink-0 flex items-center gap-1.5 transition-colors"
+            >
+              {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-400" />}
+              <span>{copiedCmd ? 'Copied' : 'Copy'}</span>
+            </button>
           </div>
-          <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-2">
-            <span>User: {latestSample?.cpuUserPercent?.toFixed(1) ?? '--'}%</span>
-            <span>Sys: {latestSample?.cpuSystemPercent?.toFixed(1) ?? '--'}%</span>
-            <span>iowait: {latestSample?.cpuIowaitPercent?.toFixed(1) ?? '--'}%</span>
+
+          <div className="flex justify-center gap-3 pt-2">
+            <button
+              onClick={() => onTriggerWorkload('cpu')}
+              className="px-3.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-xs text-zinc-300 transition-colors"
+            >
+              Run Test Benchmark
+            </button>
+            <button
+              onClick={onSampleLocal}
+              className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs transition-colors"
+            >
+              Sample Local Machine
+            </button>
           </div>
         </div>
-
-        {/* Physical Memory Card */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Physical Memory</span>
-            <Activity className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-zinc-100">
-              {latestSample?.memoryPercent?.toFixed(1) ?? '--'}%
-            </span>
-            <span className="text-xs text-zinc-500 font-mono">
-              Avail: {formatBytes(latestSample?.memoryAvailableBytes)}
-            </span>
-          </div>
-          <div className="w-full bg-zinc-800 rounded-full h-1.5 mt-3 overflow-hidden">
-            <div
-              className={`h-full transition-all duration-300 ${
-                (latestSample?.memoryPercent || 0) > 85 ? 'bg-red-500' : 'bg-emerald-400'
-              }`}
-              style={{ width: `${Math.min(100, latestSample?.memoryPercent || 0)}%` }}
-            />
-          </div>
-          <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-2">
-            <span>Used: {formatBytes(latestSample?.memoryUsedBytes)}</span>
-            <span>Swap: {latestSample?.swapPercent?.toFixed(0) ?? '--'}%</span>
-          </div>
-        </div>
-
-        {/* Storage I/O Card */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Storage I/O Rates</span>
-            <HardDrive className="w-4 h-4 text-cyan-400" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="text-xl font-bold font-mono text-zinc-100">
-              {formatRate(latestSample?.diskWriteBytesPerSec)}
-            </span>
-            <span className="text-xs text-zinc-500 font-mono">write</span>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-xs font-mono text-zinc-400 border-t border-zinc-800/80 pt-2">
-            <span>Read: {formatRate(latestSample?.diskReadBytesPerSec)}</span>
-            <span>iowait: {latestSample?.cpuIowaitPercent?.toFixed(1) ?? '0.0'}%</span>
-          </div>
-          <div className="text-[10px] text-zinc-500 font-mono mt-1">
-            Source: /proc/diskstats
-          </div>
-        </div>
-
-        {/* Linux PSI Pressure Card */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center justify-between text-zinc-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Linux PSI Pressure</span>
-            <Network className="w-4 h-4 text-indigo-400" />
-          </div>
-          {latestSample?.psiCpuSome10 !== null ? (
-            <div>
+      ) : (
+        <>
+          {/* Core Subsystem Metric Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* CPU Card */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="flex items-center justify-between text-zinc-400 mb-2">
+                <span className="text-xs font-medium uppercase tracking-wider font-mono">CPU Utilization</span>
+                <Cpu className="w-4 h-4 text-amber-400" />
+              </div>
               <div className="flex items-baseline gap-2">
                 <span className="text-2xl font-bold font-mono text-zinc-100">
-                  {latestSample?.psiCpuSome10?.toFixed(1)}%
+                  {latestSample.cpuPercent.toFixed(1)}%
                 </span>
-                <span className="text-xs text-zinc-500 font-mono">CPU stall</span>
+                <span className="text-xs text-zinc-500 font-mono">
+                  {latestSample.load1m !== null && latestSample.load1m !== undefined ? `Load: ${latestSample.load1m}` : `${machine?.cpuCores || 4} Cores`}
+                </span>
               </div>
-              <div className="mt-3 flex justify-between text-xs font-mono text-zinc-400 border-t border-zinc-800/80 pt-2">
-                <span>Mem: {latestSample?.psiMemorySome10 !== null ? `${latestSample?.psiMemorySome10}%` : 'N/A'}</span>
-                <span>I/O: {latestSample?.psiIoSome10 !== null ? `${latestSample?.psiIoSome10}%` : 'N/A'}</span>
+              <div className="w-full bg-zinc-800 rounded-full h-1.5 mt-3 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    latestSample.cpuPercent > 85 ? 'bg-red-500' : 'bg-amber-400'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(2, latestSample.cpuPercent))}%` }}
+                />
+              </div>
+
+              {/* Per-Core CPU Meters if available */}
+              {latestSample.cpuPerCore && latestSample.cpuPerCore.length > 0 ? (
+                <div className="mt-3 pt-2 border-t border-zinc-800/80 space-y-1">
+                  <div className="text-[10px] text-zinc-500 font-mono font-semibold uppercase">Per-Core Breakdown:</div>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono text-zinc-400">
+                    {latestSample.cpuPerCore.slice(0, 8).map((pct, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-zinc-950/60 px-1.5 py-0.5 rounded">
+                        <span className="text-zinc-500">C{idx}:</span>
+                        <span className={pct > 80 ? 'text-red-400 font-bold' : 'text-zinc-300'}>{pct.toFixed(0)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-2">
+                  <span>User: {latestSample.cpuUserPercent?.toFixed(1) ?? '--'}%</span>
+                  <span>Sys: {latestSample.cpuSystemPercent?.toFixed(1) ?? '--'}%</span>
+                  <span>iowait: {latestSample.cpuIowaitPercent?.toFixed(1) ?? '--'}%</span>
+                </div>
+              )}
+            </div>
+
+            {/* Physical Memory Card */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="flex items-center justify-between text-zinc-400 mb-2">
+                <span className="text-xs font-medium uppercase tracking-wider font-mono">Physical Memory</span>
+                <Activity className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold font-mono text-zinc-100">
+                  {latestSample.memoryPercent.toFixed(1)}%
+                </span>
+                <span className="text-xs text-zinc-500 font-mono">
+                  Avail: {formatBytes(latestSample.memoryAvailableBytes)}
+                </span>
+              </div>
+              <div className="w-full bg-zinc-800 rounded-full h-1.5 mt-3 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    latestSample.memoryPercent > 85 ? 'bg-red-500' : 'bg-emerald-400'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(2, latestSample.memoryPercent))}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-2">
+                <span>Used: {formatBytes(latestSample.memoryUsedBytes)}</span>
+                <span>Pagefile/Swap: {latestSample.swapPercent?.toFixed(0) ?? '--'}%</span>
               </div>
             </div>
-          ) : (
-            <div className="py-2">
-              <span className="inline-flex items-center gap-1 text-xs text-zinc-400 font-mono bg-zinc-800/60 px-2 py-1 rounded">
-                <HelpCircle className="w-3.5 h-3.5 text-zinc-500" />
-                PSI Unsupported
+
+            {/* Storage I/O Card */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="flex items-center justify-between text-zinc-400 mb-2">
+                <span className="text-xs font-medium uppercase tracking-wider font-mono">Storage I/O &amp; Disk</span>
+                <HardDrive className="w-4 h-4 text-cyan-400" />
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span className="text-xl font-bold font-mono text-zinc-100">
+                  {formatRate(latestSample.diskWriteBytesPerSec)}
+                </span>
+                <span className="text-xs text-zinc-500 font-mono">write</span>
+              </div>
+              <div className="mt-3 flex items-center justify-between text-xs font-mono text-zinc-400 border-t border-zinc-800/80 pt-2">
+                <span>Read: {formatRate(latestSample.diskReadBytesPerSec)}</span>
+                <span>Disk: {latestSample.diskPercent ? `${latestSample.diskPercent.toFixed(0)}%` : 'N/A'}</span>
+              </div>
+              <div className="text-[10px] text-zinc-500 font-mono mt-1">
+                Drive: {formatBytes(latestSample.diskAvailableBytes, 'GB')} free
+              </div>
+            </div>
+
+            {/* Linux PSI / Windows Diagnostics Card */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <div className="flex items-center justify-between text-zinc-400 mb-2">
+                <span className="text-xs font-medium uppercase tracking-wider font-mono">
+                  {isWindows ? 'Windows Diagnostic Interface' : 'Linux PSI Pressure'}
+                </span>
+                <Network className="w-4 h-4 text-indigo-400" />
+              </div>
+              {latestSample.psiCpuSome10 !== null ? (
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-bold font-mono text-zinc-100">
+                      {latestSample.psiCpuSome10.toFixed(1)}%
+                    </span>
+                    <span className="text-xs text-zinc-500 font-mono">CPU stall</span>
+                  </div>
+                  <div className="mt-3 flex justify-between text-xs font-mono text-zinc-400 border-t border-zinc-800/80 pt-2">
+                    <span>Mem: {latestSample.psiMemorySome10 !== null ? `${latestSample.psiMemorySome10}%` : 'N/A'}</span>
+                    <span>I/O: {latestSample.psiIoSome10 !== null ? `${latestSample.psiIoSome10}%` : 'N/A'}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="py-2">
+                  <span className="inline-flex items-center gap-1 text-xs text-zinc-400 font-mono bg-zinc-800/60 px-2 py-1 rounded">
+                    <HelpCircle className="w-3.5 h-3.5 text-zinc-500" />
+                    {isWindows ? 'Native Windows Kernel' : isMac ? 'Darwin Kernel' : 'PSI Unsupported'}
+                  </span>
+                  <p className="text-[10px] text-zinc-500 font-mono mt-2 leading-tight">
+                    {isWindows
+                      ? 'Windows uses NT Virtual Memory & IO counters; Linux /proc/pressure is absent by design.'
+                      : isMac
+                      ? 'macOS Darwin kernel uses mach/vm stats.'
+                      : 'Kernel lacks CONFIG_PSI.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Network Throughput Strip */}
+          <div className="p-3 rounded-xl border border-zinc-800 bg-zinc-900/60 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+            <div className="flex items-center gap-2">
+              <Network className="w-4 h-4 text-sky-400" />
+              <span className="font-semibold text-zinc-300">Network Throughput:</span>
+            </div>
+            <div className="flex items-center gap-6">
+              <div className="flex items-center gap-1.5 text-emerald-400">
+                <ArrowDownRight className="w-4 h-4" />
+                <span>RX: {formatRate(latestSample.networkRxBytesPerSec)}</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-indigo-400">
+                <ArrowUpRight className="w-4 h-4" />
+                <span>TX: {formatRate(latestSample.networkTxBytesPerSec)}</span>
+              </div>
+              <div className="text-zinc-500 text-[11px]">
+                Errors: {latestSample.networkErrorsPerSec ?? 0}/s
+              </div>
+            </div>
+          </div>
+
+          {/* Top Live Processes Table */}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider font-mono">
+                Live Top System Processes ({isWindows ? 'via Windows NT Process Enum' : 'via /proc/[pid]/stat'})
+              </h3>
+              <span className="text-[10px] font-mono text-zinc-500">
+                Sorted by memory and CPU consumption
               </span>
-              <p className="text-[10px] text-zinc-500 font-mono mt-2">
-                Kernel lacks CONFIG_PSI or running in unprivileged container.
-              </p>
             </div>
-          )}
-        </div>
-      </div>
 
-      {/* Top Linux Processes Table */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-semibold text-zinc-200 uppercase tracking-wider">
-            Live Top System Processes (via /proc/[pid]/stat)
-          </h3>
-          <span className="text-[10px] font-mono text-zinc-500">
-            Real process page tables
-          </span>
-        </div>
-
-        {latestSample?.topProcesses && latestSample.topProcesses.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs font-mono">
-              <thead>
-                <tr className="border-b border-zinc-800 text-zinc-500">
-                  <th className="pb-2 font-medium">PID</th>
-                  <th className="pb-2 font-medium">COMMAND</th>
-                  <th className="pb-2 font-medium text-right">RESIDENT RAM</th>
-                  <th className="pb-2 font-medium text-right">MEM %</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
-                {latestSample.topProcesses.map((p) => (
-                  <tr key={p.pid} className="hover:bg-zinc-800/40 transition-colors">
-                    <td className="py-2 text-zinc-400">{p.pid}</td>
-                    <td className="py-2 font-semibold text-zinc-100">{p.name}</td>
-                    <td className="py-2 text-right">{formatBytes(p.rssBytes)}</td>
-                    <td className="py-2 text-right">
-                      <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400">
-                        {p.memoryPercent.toFixed(1)}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {latestSample.topProcesses && latestSample.topProcesses.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead>
+                    <tr className="border-b border-zinc-800 text-zinc-500">
+                      <th className="pb-2 font-medium">PID</th>
+                      <th className="pb-2 font-medium">PROCESS NAME</th>
+                      <th className="pb-2 font-medium text-right">CPU %</th>
+                      <th className="pb-2 font-medium text-right">RESIDENT RAM</th>
+                      <th className="pb-2 font-medium text-right">MEM %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
+                    {latestSample.topProcesses.map((p) => (
+                      <tr key={p.pid} className="hover:bg-zinc-800/40 transition-colors">
+                        <td className="py-2 text-zinc-400">{p.pid}</td>
+                        <td className="py-2 font-semibold text-zinc-100">{p.name}</td>
+                        <td className="py-2 text-right">
+                          <span className={p.cpuPercent > 50 ? 'text-red-400 font-bold' : 'text-zinc-300'}>
+                            {p.cpuPercent.toFixed(1)}%
+                          </span>
+                        </td>
+                        <td className="py-2 text-right text-zinc-400">{formatBytes(p.rssBytes)}</td>
+                        <td className="py-2 text-right">
+                          <span className="inline-block px-1.5 py-0.5 rounded bg-zinc-800 text-emerald-400">
+                            {p.memoryPercent.toFixed(1)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="p-4 text-center text-xs text-zinc-500 font-mono">
+                Process telemetry stream updating...
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="p-4 text-center text-xs text-zinc-500 font-mono">
-            Process inspection telemetry updating...
-          </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 };

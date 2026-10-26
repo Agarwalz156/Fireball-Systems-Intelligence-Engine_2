@@ -129,6 +129,7 @@ export interface Machine {
   collectionErrors?: string[];
   availableMetrics?: string[];
   isRevoked?: boolean;
+  uptimeSeconds?: number | null;
   capabilities: {
     hasPsi: boolean;
     hasSwap: boolean;
@@ -289,3 +290,23 @@ export interface IngestPayload {
   sample: Omit<TelemetrySample, 'id' | 'ownerId' | 'createdAt'>;
   machineMetadata?: Partial<Machine>;
 }
+
+export interface AuditLog {
+  id: string;
+  timestamp: string;
+  action: string;
+  actor: string;
+  target?: string;
+  details: string;
+  severity: 'info' | 'warning' | 'error';
+}
+
+export interface AdminSettings {
+  retentionMaxSamples: number;
+  samplingIntervalDefault: number;
+  requireTokenAuth: boolean;
+  autoEnrollAllowed: boolean;
+  alertOnDisconnection: boolean;
+  disconnectionThresholdSec: number;
+}
+
