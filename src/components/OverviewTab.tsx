@@ -104,10 +104,22 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const isMac = machine?.platform === 'darwin' || machine?.os?.toLowerCase().includes('mac');
   const isLinux = !isWindows && !isMac;
 
-  const targetCmd = `python scripts/windows_monitor.py --machine-id "${machine?.id || 'win-primary'}" --token "${machine?.enrollmentToken || 'fb_win_token_primary'}" --url "${window.location.origin}/api/telemetry"`;
+  const [activeShell, setActiveShell] = useState<'powershell' | 'cmd' | 'bash'>(isWindows ? 'powershell' : (isMac || isLinux ? 'bash' : 'powershell'));
+
+  const machineId = machine?.id || 'win-localhost';
+  const token = machine?.enrollmentToken || 'fb_win_token_primary';
+  const apiOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ais-dev-ko6ucrltlcrhb5odbgg2k7-480134225901.asia-east1.run.app';
+
+  const powerShellCmd = `# 1. Download monitor script directly onto your Windows laptop:\nInvoke-WebRequest -Uri "${apiOrigin}/windows_monitor.py" -OutFile "windows_monitor.py"\n\n# 2. Install dependencies & launch agent using Python Launcher:\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
+
+  const cmdPromptCmd = `:: 1. Download monitor script\ncurl -o windows_monitor.py ${apiOrigin}/windows_monitor.py\n\n:: 2. Install dependencies & launch with py launcher\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
+
+  const bashCmd = `# 1. Download monitor script\ncurl -fsSL ${apiOrigin}/windows_monitor.py -o windows_monitor.py\n\n# 2. Install dependencies & launch agent\npython3 -m pip install psutil requests\npython3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
+
+  const currentCmd = activeShell === 'powershell' ? powerShellCmd : (activeShell === 'cmd' ? cmdPromptCmd : bashCmd);
 
   const copyCommand = () => {
-    navigator.clipboard.writeText(targetCmd);
+    navigator.clipboard.writeText(currentCmd);
     setCopiedCmd(true);
     setTimeout(() => setCopiedCmd(false), 2000);
   };
@@ -207,31 +219,92 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
       {/* If No Telemetry Sample Received Yet: Render Transparent Waiting Guide (No Fake Fallbacks) */}
       {!latestSample ? (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-8 text-center space-y-4 font-mono">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-6 sm:p-8 text-center space-y-5 font-mono">
           <div className="w-12 h-12 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
             <Radio className="w-6 h-6 animate-pulse" />
           </div>
 
-          <div className="max-w-lg mx-auto space-y-2">
+          <div className="max-w-xl mx-auto space-y-2">
             <h3 className="text-base font-bold text-zinc-100">
               Waiting for Telemetry from {machine?.name || machine?.hostname || 'Registered Computer'}
             </h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Fireball is configured in real-world live mode. It does not fabricate simulated or fake metrics. To start streaming hardware counters from your laptop, launch the monitoring agent in PowerShell or Terminal:
+              Fireball does not display simulated or fake metrics. To stream live hardware telemetry from your computer into this dashboard, copy and run these commands:
             </p>
           </div>
 
-          <div className="max-w-2xl mx-auto p-3 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-3 text-left">
-            <pre className="text-xs text-amber-300 font-mono overflow-x-auto whitespace-pre-wrap select-all">
-              {targetCmd}
-            </pre>
-            <button
-              onClick={copyCommand}
-              className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono shrink-0 flex items-center gap-1.5 transition-colors"
-            >
-              {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-400" />}
-              <span>{copiedCmd ? 'Copied' : 'Copy'}</span>
-            </button>
+          {/* Shell Selector Tabs */}
+          <div className="max-w-2xl mx-auto">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-2 mb-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveShell('powershell')}
+                  className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                    activeShell === 'powershell'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+                  }`}
+                >
+                  Windows PowerShell (Recommended)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveShell('cmd')}
+                  className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                    activeShell === 'cmd'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+                  }`}
+                >
+                  Windows Command Prompt (CMD)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveShell('bash')}
+                  className={`px-3 py-1 rounded text-xs font-semibold transition-colors ${
+                    activeShell === 'bash'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
+                  }`}
+                >
+                  Linux / macOS
+                </button>
+              </div>
+
+              <a
+                href={`${apiOrigin}/windows_monitor.py`}
+                download="windows_monitor.py"
+                className="text-[11px] text-zinc-400 hover:text-amber-300 underline transition-colors"
+                title="Direct script download"
+              >
+                Direct Download Script (.py)
+              </a>
+            </div>
+
+            <div className="p-3.5 rounded-lg bg-zinc-950 border border-zinc-800 flex items-start justify-between gap-3 text-left">
+              <pre className="text-xs text-amber-300 font-mono overflow-x-auto whitespace-pre-wrap select-all leading-relaxed">
+                {currentCmd}
+              </pre>
+              <button
+                type="button"
+                onClick={copyCommand}
+                className="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-mono shrink-0 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                {copiedCmd ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-400" />}
+                <span>{copiedCmd ? 'Copied!' : 'Copy Snippet'}</span>
+              </button>
+            </div>
+
+            {/* Explanatory Resolution Note for "Failed to locate pyvenv.cfg" */}
+            <div className="mt-3 p-3 rounded-lg bg-sky-950/20 border border-sky-800/30 text-left text-xs font-mono space-y-1">
+              <div className="flex items-center gap-1.5 text-sky-300 font-semibold">
+                <span>💡 Fixing Windows `Failed to locate pyvenv.cfg` error:</span>
+              </div>
+              <p className="text-zinc-400 text-[11px] leading-relaxed">
+                If typing <code className="text-zinc-200">python</code> gives <code className="text-red-300 font-semibold">Failed to locate pyvenv.cfg</code>, your Windows path is pointing to an old or moved virtual environment. The commands above use <code className="text-emerald-300 font-semibold">py -3</code> (the official Windows Python launcher), which automatically connects to your clean Python 3 installation!
+              </p>
+            </div>
           </div>
 
           <div className="flex justify-center gap-3 pt-2">

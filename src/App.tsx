@@ -232,10 +232,24 @@ export default function App() {
             {/* Export Report Trigger */}
             <button
               onClick={() => setIsReportOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-xs font-mono text-zinc-300 transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-xs font-mono text-zinc-300 transition-colors cursor-pointer"
             >
               <FileDown className="w-3.5 h-3.5 text-zinc-400" />
               <span className="hidden sm:inline">Export Report</span>
+            </button>
+
+            {/* Quick Admin Console Header Trigger */}
+            <button
+              onClick={() => setActiveTab('admin')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-mono font-semibold transition-all cursor-pointer ${
+                activeTab === 'admin'
+                  ? 'bg-amber-500 text-zinc-950 border-amber-400 shadow-sm'
+                  : 'border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300'
+              }`}
+              title="Open Admin Console"
+            >
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Admin Console</span>
             </button>
 
             {/* Firebase Auth Controls */}
@@ -426,6 +440,8 @@ export default function App() {
             onSaveExperiment={handleSaveExperiment}
             onTriggerWorkload={handleTriggerWorkload}
             isWorkloadRunning={isWorkloadRunning}
+            onRefreshFeed={fetchFeed}
+            selectedMachineId={selectedMachineId}
           />
         )}
 

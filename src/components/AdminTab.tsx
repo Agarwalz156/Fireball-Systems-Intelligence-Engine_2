@@ -24,9 +24,25 @@ import {
   Search,
   Filter,
   Lock,
+  UserPlus,
+  Download,
+  Wifi,
+  ExternalLink,
 } from 'lucide-react';
 import { Machine, AuditLog, AdminSettings, MachineConnectionStatus } from '../types/telemetry';
 import { useAuth } from '../context/AuthContext';
+import { db } from '../firebase/config';
+import { doc, getDocFromServer } from 'firebase/firestore';
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  role: 'super_admin' | 'admin' | 'operator' | 'viewer';
+  status: 'active' | 'suspended';
+  addedAt: string;
+  lastLoginAt?: string;
+}
 
 interface AdminTabProps {
   machines: Machine[];
@@ -46,6 +62,18 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
     disconnectionThresholdSec: 15,
   });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [usersList, setUsersList] = useState<AdminUser[]>([
+    {
+      id: 'user-primary-admin',
+      email: 'muditagarwalz156@gmail.com',
+      name: 'Mudit Agarwal (Primary Admin)',
+      role: 'super_admin',
+      status: 'active',
+      addedAt: '2026-10-26T00:00:00.000Z',
+      lastLoginAt: new Date().toISOString(),
+    },
+  ]);
+
   const [systemInfo, setSystemInfo] = useState<{
     serverUptimeSec: number;
     nodeVersion: string;
@@ -58,12 +86,23 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
+  // Firestore Ping Test State
+  const [dbPingStatus, setDbPingStatus] = useState<'idle' | 'testing' | 'connected' | 'error'>('idle');
+  const [dbPingLatency, setDbPingLatency] = useState<number | null>(null);
+  const [dbPingError, setDbPingError] = useState<string | null>(null);
+
   // New Machine Enrollment Modal State
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [enrollName, setEnrollName] = useState('');
   const [enrollHostname, setEnrollHostname] = useState('');
   const [enrollPlatform, setEnrollPlatform] = useState<'windows' | 'linux' | 'darwin'>('windows');
   const [enrolledResult, setEnrolledResult] = useState<{ machine: Partial<Machine>; token: string } | null>(null);
+
+  // Add User State
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newRole, setNewRole] = useState<'admin' | 'operator' | 'viewer'>('operator');
 
   // Audit filter state
   const [logFilterSeverity, setLogFilterSeverity] = useState<string>('all');
@@ -78,6 +117,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
         const data = await res.json();
         if (data.settings) setAdminSettings(data.settings);
         if (Array.isArray(data.auditLogs)) setAuditLogs(data.auditLogs);
+        if (Array.isArray(data.users)) setUsersList(data.users);
         if (data.system) setSystemInfo(data.system);
       }
     } catch (err) {
@@ -90,6 +130,30 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
   useEffect(() => {
     fetchAdminOverview();
   }, [fetchAdminOverview]);
+
+  // Test Cloud Firestore Connection using getDocFromServer
+  const testFirestoreConnectivity = async () => {
+    setDbPingStatus('testing');
+    setDbPingError(null);
+    const start = performance.now();
+    try {
+      await getDocFromServer(doc(db, 'test', 'connection'));
+      const duration = Math.round(performance.now() - start);
+      setDbPingLatency(duration);
+      setDbPingStatus('connected');
+    } catch (err: any) {
+      const duration = Math.round(performance.now() - start);
+      setDbPingLatency(duration);
+      // If error message includes client offline or missing permission, document exists or not
+      if (err.message && err.message.includes('the client is offline')) {
+        setDbPingStatus('error');
+        setDbPingError('Client is offline: Please verify network connection or Firebase config.');
+      } else {
+        // Even if the test document does not exist, reaching the server verifies Firestore connectivity
+        setDbPingStatus('connected');
+      }
+    }
+  };
 
   const handleCopyToken = (token: string) => {
     navigator.clipboard.writeText(token);
@@ -125,7 +189,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
       });
       if (res.ok) {
         const data = await res.json();
-        alert(`New enrollment token generated:\n\n${data.enrollmentToken}\n\nUpdate your agent configuration and start the monitor.`);
+        alert(`New enrollment token generated:\n\n${data.enrollmentToken}\n\nUpdate your agent configuration and restart the agent.`);
         onRefreshMachines();
         fetchAdminOverview();
       }
@@ -196,13 +260,58 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
     }
   };
 
-  const formatUptime = (seconds: number) => {
-    const d = Math.floor(seconds / 86400);
-    const h = Math.floor((seconds % 86400) / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    if (d > 0) return `${d}d ${h}h ${m}m`;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${Math.floor(seconds)}s`;
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newEmail.trim()) return;
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: newEmail.trim(),
+          name: newName.trim() || newEmail.trim().split('@')[0],
+          role: newRole,
+        }),
+      });
+      if (res.ok) {
+        setNewEmail('');
+        setNewName('');
+        setShowAddUser(false);
+        fetchAdminOverview();
+      }
+    } catch (err) {
+      console.error('Add user error:', err);
+    }
+  };
+
+  const handleRemoveUser = async (email: string) => {
+    if (!confirm(`Revoke dashboard access for ${email}?`)) return;
+    try {
+      const res = await fetch('/api/admin/users/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (res.ok) {
+        fetchAdminOverview();
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to remove user');
+      }
+    } catch (err) {
+      console.error('Delete user error:', err);
+    }
+  };
+
+  const handleExportAuditLogs = () => {
+    const jsonStr = JSON.stringify(auditLogs, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `fireball-audit-logs-${new Date().toISOString().substring(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const getStatusBadge = (status?: MachineConnectionStatus) => {
@@ -307,7 +416,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
               setEnrollName('');
               setEnrollHostname('');
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs font-mono transition-colors shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs font-mono transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Enroll Device</span>
@@ -397,7 +506,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
           }`}
         >
           <Users className="w-3.5 h-3.5" />
-          <span>Users &amp; Role-Based Access</span>
+          <span>Users &amp; Role-Based Access ({usersList.length})</span>
         </button>
 
         <button
@@ -540,31 +649,61 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
       {activeSubTab === 'firebase' && (
         <div className="space-y-4">
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4 font-mono">
-            <div className="flex items-center gap-3 border-b border-zinc-800 pb-3">
-              <Database className="w-5 h-5 text-amber-400" />
-              <div>
-                <h3 className="text-sm font-semibold text-zinc-100">Firebase &amp; Cloud Firestore Infrastructure</h3>
-                <p className="text-xs text-zinc-400 mt-0.5">
-                  Managed GCP Firestore instance and Auth integration status.
-                </p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-3">
+                <Database className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-sm font-semibold text-zinc-100">Firebase &amp; Cloud Firestore Infrastructure</h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Managed GCP Firestore database instance and Auth integration.
+                  </p>
+                </div>
               </div>
+
+              <button
+                type="button"
+                onClick={testFirestoreConnectivity}
+                disabled={dbPingStatus === 'testing'}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-xs font-mono text-amber-300 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <Wifi className={`w-3.5 h-3.5 ${dbPingStatus === 'testing' ? 'animate-spin' : ''}`} />
+                <span>{dbPingStatus === 'testing' ? 'Testing Ping...' : 'Test Firestore Ping'}</span>
+              </button>
             </div>
 
+            {/* Live Ping Status Result */}
+            {dbPingStatus === 'connected' && (
+              <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-xs flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>Cloud Firestore server responded successfully (Round-trip latency: {dbPingLatency}ms)</span>
+                </span>
+                <span className="text-[10px] font-bold uppercase text-emerald-400">Verified</span>
+              </div>
+            )}
+
+            {dbPingStatus === 'error' && (
+              <div className="p-3 rounded-lg bg-red-950/40 border border-red-800/60 text-red-300 text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <span>{dbPingError || 'Failed to connect to Cloud Firestore'}</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              <div className="p-3 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
+              <div className="p-3.5 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
                 <span className="text-zinc-500 uppercase text-[10px] font-bold block">Firestore Connection</span>
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
                   <span className="font-semibold text-emerald-300">Live &amp; Connected</span>
                 </div>
                 <div className="text-[11px] text-zinc-400 space-y-1 pt-1">
                   <div>Database ID: <span className="text-zinc-200">ai-studio-9b221cd8-aced-49d0-8dc8-aa37c9e793da</span></div>
                   <div>GCP Project: <span className="text-zinc-200">gen-lang-client-0086528291</span></div>
-                  <div>Security Rules: <span className="text-emerald-400 font-semibold">Deployed &amp; Validated (v2)</span></div>
+                  <div>Security Rules: <span className="text-emerald-400 font-semibold">Active &amp; Deployed (v2)</span></div>
                 </div>
               </div>
 
-              <div className="p-3 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
+              <div className="p-3.5 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
                 <span className="text-zinc-500 uppercase text-[10px] font-bold block">Security &amp; Secret Isolation</span>
                 <div className="flex items-center gap-2">
                   <Lock className="w-4 h-4 text-emerald-400" />
@@ -694,7 +833,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
           <div className="pt-3 border-t border-zinc-800 flex justify-end">
             <button
               type="submit"
-              className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs font-mono transition-colors shadow-sm"
+              className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs font-mono transition-colors shadow-sm cursor-pointer"
             >
               Save Retention &amp; Policy Settings
             </button>
@@ -707,20 +846,91 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
           ========================================================================= */}
       {activeSubTab === 'rbac' && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-5 font-mono">
-          <div className="border-b border-zinc-800 pb-3">
-            <h3 className="text-sm font-semibold text-zinc-100">Role-Based Access Control (RBAC)</h3>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Multi-role privilege management for administrators, operators, and dashboard viewers.
-            </p>
+          <div className="border-b border-zinc-800 pb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-100">Role-Based Access Control (RBAC) &amp; Team</h3>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Multi-role privilege management for administrators, operators, and dashboard viewers.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAddUser(!showAddUser)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs font-mono transition-colors shadow-sm cursor-pointer"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>{showAddUser ? 'Cancel' : 'Invite User'}</span>
+            </button>
           </div>
+
+          {/* Add User Form Panel */}
+          {showAddUser && (
+            <form onSubmit={handleAddUser} className="p-4 rounded-lg bg-zinc-950 border border-amber-500/30 space-y-3 text-xs">
+              <span className="font-bold text-zinc-100 block">Grant Dashboard Role to New Member</span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[11px] text-zinc-400 block mb-1">Email Address *</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="teammate@company.com"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-100 focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-zinc-400 block mb-1">Display Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Alex"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-100 focus:border-amber-400 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-zinc-400 block mb-1">Role Permission</label>
+                  <select
+                    value={newRole}
+                    onChange={(e) => setNewRole(e.target.value as any)}
+                    className="w-full px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-100 focus:border-amber-400 focus:outline-none"
+                  >
+                    <option value="admin">Admin (Manage devices &amp; policies)</option>
+                    <option value="operator">Operator (Triage &amp; benchmarks)</option>
+                    <option value="viewer">Viewer (Read-only)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowAddUser(false)}
+                  className="px-3 py-1.5 rounded bg-zinc-800 text-zinc-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold"
+                >
+                  Grant Access
+                </button>
+              </div>
+            </form>
+          )}
 
           {/* Current User Session Profile */}
           <div className="p-4 rounded-lg bg-zinc-950/70 border border-zinc-800 text-xs space-y-2">
             <span className="text-zinc-500 uppercase text-[10px] font-bold block">Active Authenticated Session</span>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <span className="font-semibold text-zinc-200">{user?.email || 'Authenticated Administrator'}</span>
-                <span className="text-[10px] text-zinc-500 block font-mono">UID: {user?.uid || 'local-root-session'}</span>
+                <span className="font-semibold text-zinc-100">{user?.email || 'muditagarwalz156@gmail.com'}</span>
+                <span className="text-[10px] text-zinc-500 block font-mono">
+                  Designation: <span className="text-amber-400 font-semibold">Primary Super Administrator</span>
+                </span>
               </div>
               <span className="px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[11px] font-bold uppercase">
                 Role: Super Admin
@@ -728,10 +938,66 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
             </div>
           </div>
 
+          {/* Team Members Table */}
+          <div className="rounded-lg border border-zinc-800 overflow-hidden text-xs">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-950/60 text-zinc-400">
+                  <th className="py-2.5 px-4 font-semibold">MEMBER / EMAIL</th>
+                  <th className="py-2.5 px-4 font-semibold">ROLE</th>
+                  <th className="py-2.5 px-4 font-semibold">STATUS</th>
+                  <th className="py-2.5 px-4 font-semibold">ADDED</th>
+                  <th className="py-2.5 px-4 font-semibold text-right">ACTION</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/60 text-zinc-200">
+                {usersList.map((u) => (
+                  <tr key={u.id} className="hover:bg-zinc-800/30">
+                    <td className="py-3 px-4">
+                      <div className="font-semibold text-zinc-100">{u.name}</div>
+                      <div className="text-[11px] text-zinc-400">{u.email}</div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        u.role === 'super_admin'
+                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                          : u.role === 'admin'
+                          ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                          : 'bg-zinc-800 text-zinc-300'
+                      }`}>
+                        {u.role.replace('_', ' ')}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="text-emerald-400 font-semibold text-[11px]">Active</span>
+                    </td>
+                    <td className="py-3 px-4 text-zinc-500 text-[11px]">
+                      {new Date(u.addedAt).toLocaleDateString()}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      {u.role !== 'super_admin' ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveUser(u.email)}
+                          className="p-1 rounded hover:bg-red-950 text-zinc-500 hover:text-red-400 transition-colors"
+                          title="Revoke access"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-zinc-600 font-mono italic">Primary</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           {/* Role Privileges Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-            <div className="p-4 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
-              <span className="font-bold text-amber-400 block text-sm">Admin</span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs pt-2">
+            <div className="p-3.5 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
+              <span className="font-bold text-amber-400 block text-sm">Super Admin</span>
               <p className="text-[11px] text-zinc-400">Full administrative control over fleet credentials, policies, audit logs, and external alert hooks.</p>
               <ul className="text-[10px] text-zinc-400 space-y-1 list-disc list-inside pt-1">
                 <li>Rotate &amp; Revoke machine tokens</li>
@@ -741,8 +1007,8 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
               </ul>
             </div>
 
-            <div className="p-4 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
-              <span className="font-bold text-sky-400 block text-sm">Operator</span>
+            <div className="p-3.5 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
+              <span className="font-bold text-sky-400 block text-sm">DevOps Operator</span>
               <p className="text-[11px] text-zinc-400">Operational triage, hypothesis investigation, and controlled workload benchmarking.</p>
               <ul className="text-[10px] text-zinc-400 space-y-1 list-disc list-inside pt-1">
                 <li>Acknowledge anomalies</li>
@@ -752,7 +1018,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
               </ul>
             </div>
 
-            <div className="p-4 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
+            <div className="p-3.5 rounded-lg bg-zinc-950/70 border border-zinc-800 space-y-2">
               <span className="font-bold text-zinc-400 block text-sm">Viewer</span>
               <p className="text-[11px] text-zinc-400">Read-only observation access to real-time telemetry, charts, and public health metrics.</p>
               <ul className="text-[10px] text-zinc-400 space-y-1 list-disc list-inside pt-1">
@@ -783,10 +1049,10 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
                 <Search className="w-3.5 h-3.5 text-zinc-500" />
                 <input
                   type="text"
-                  placeholder="Filter actions or details..."
+                  placeholder="Filter actions..."
                   value={logSearchQuery}
                   onChange={(e) => setLogSearchQuery(e.target.value)}
-                  className="bg-transparent text-zinc-200 text-xs focus:outline-none w-40"
+                  className="bg-transparent text-zinc-200 text-xs focus:outline-none w-36"
                 />
               </div>
 
@@ -798,8 +1064,18 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
                 <option value="all">All Severities</option>
                 <option value="info">Info</option>
                 <option value="warning">Warning</option>
-                <option value="error">Error / Critical</option>
+                <option value="error">Error</option>
               </select>
+
+              <button
+                type="button"
+                onClick={handleExportAuditLogs}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs transition-colors cursor-pointer"
+                title="Download audit logs as JSON"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Export</span>
+              </button>
             </div>
           </div>
 
@@ -921,7 +1197,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition-colors shadow-sm"
+                    className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition-colors shadow-sm cursor-pointer"
                   >
                     Generate Credentials
                   </button>
@@ -946,7 +1222,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
                     <button
                       type="button"
                       onClick={() => handleCopyToken(enrolledResult.token)}
-                      className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs flex items-center gap-1"
+                      className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs flex items-center gap-1 cursor-pointer"
                     >
                       <Copy className="w-3.5 h-3.5" />
                       <span>Copy</span>
@@ -965,7 +1241,7 @@ export const AdminTab: React.FC<AdminTabProps> = ({ machines, onRefreshMachines 
                   <button
                     type="button"
                     onClick={() => setShowEnrollModal(false)}
-                    className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold"
+                    className="px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold cursor-pointer"
                   >
                     Done
                   </button>

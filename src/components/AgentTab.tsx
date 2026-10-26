@@ -1187,38 +1187,40 @@ export const AgentTab: React.FC<AgentTabProps> = ({
         </div>
       </div>
 
-      {/* 4. Setup Instructions for Ubuntu 24.04 and WSL2 */}
+      {/* 4. Setup Instructions for Windows, Linux & WSL2 */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4 font-mono text-xs">
         <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-200">
           Agent Enrollment & Launch Instructions
         </h4>
 
-        <div className="space-y-3 text-zinc-300">
-          <p>
-            <strong>1. Navigate to the agent folder</strong> on your Ubuntu 24.04 host or WSL2 instance:
-          </p>
-          <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-200 flex items-center justify-between">
-            <code>cd agent</code>
+        {/* Windows Instructions */}
+        <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 space-y-3">
+          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+            <span className="font-semibold text-amber-300">Windows 11 / 10 (PowerShell)</span>
+            <span className="text-[10px] text-zinc-500">psutil + requests</span>
           </div>
-
-          <p>
-            <strong>2. Create `agent_config.json`</strong> with your enrollment credentials, threshold rules, and external notification destinations:
+          <p className="text-zinc-300">
+            <strong>1. Download and run the Windows monitor:</strong>
           </p>
-          <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-amber-300 text-[11px] overflow-x-auto">
-            <pre>{JSON.stringify(currentConfigJson, null, 2)}</pre>
+          <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-amber-200 text-xs overflow-x-auto whitespace-pre-wrap select-all">
+            {`# Download script\nInvoke-WebRequest -Uri "${window.location.origin}/windows_monitor.py" -OutFile "windows_monitor.py"\n\n# Run with Python launcher (bypasses broken venvs)\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${machine?.id || 'win-localhost'}" --token "${enrollmentToken}" --url "${window.location.origin}/api/telemetry"`}
           </div>
-
-          <p>
-            <strong>3. Launch continuous telemetry ingestion:</strong>
+          <p className="text-[11px] text-zinc-400">
+            💡 <em>If you see <code className="text-red-300">Failed to locate pyvenv.cfg</code>, using <code className="text-emerald-300">py -3</code> as shown above cleanly runs your native Python 3 interpreter without relying on a stale virtualenv.</em>
           </p>
-          <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-100 flex items-center justify-between">
-            <code>{runCommand}</code>
-            <button
-              onClick={() => copyToClipboard(runCommand)}
-              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
-            >
-              {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-            </button>
+        </div>
+
+        {/* Linux / WSL2 Instructions */}
+        <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 space-y-3">
+          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-2">
+            <span className="font-semibold text-zinc-300">Linux / Ubuntu 24.04 / WSL2</span>
+            <span className="text-[10px] text-zinc-500">Native procfs / psutil</span>
+          </div>
+          <p className="text-zinc-300">
+            <strong>Download &amp; launch:</strong>
+          </p>
+          <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs overflow-x-auto whitespace-pre-wrap select-all">
+            {`curl -fsSL ${window.location.origin}/windows_monitor.py -o windows_monitor.py\npython3 -m pip install psutil requests\npython3 windows_monitor.py --machine-id "${machine?.id || 'host-device'}" --token "${enrollmentToken}" --url "${window.location.origin}/api/telemetry"`}
           </div>
         </div>
       </div>
