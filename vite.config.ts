@@ -9,7 +9,13 @@ function apiPlugin(): Plugin {
     name: 'fireball-api-backend',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (req.url && req.url.startsWith('/api/')) {
+        if (
+          req.url &&
+          (req.url.startsWith('/api/') ||
+           req.url.startsWith('/windows_monitor.py') ||
+           req.url.startsWith('/scripts/windows_monitor.py') ||
+           req.url.startsWith('/setup.ps1'))
+        ) {
           const handled = handleApiRequest(req, res);
           if (handled) return;
         }
