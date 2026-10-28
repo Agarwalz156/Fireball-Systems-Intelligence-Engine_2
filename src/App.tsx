@@ -34,7 +34,7 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [selectedMachineId, setSelectedMachineId] = useState<string>('host-localhost');
+  const [selectedMachineId, setSelectedMachineId] = useState<string>('win-localhost');
   const [samples, setSamples] = useState<TelemetrySample[]>([]);
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [investigations, setInvestigations] = useState<Investigation[]>([]);
@@ -53,6 +53,10 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.machine) {
+          // If server returned live streaming machine, auto-align selection
+          if (data.machine.id && data.samples && data.samples.length > 0) {
+            setSelectedMachineId((cur) => (cur !== data.machine.id ? data.machine.id : cur));
+          }
           setMachines((prev) => {
             const exists = prev.some((m) => m.id === data.machine.id);
             if (!exists) return [...prev, data.machine];
@@ -83,10 +87,17 @@ export default function App() {
         if (Array.isArray(data.machines) && data.machines.length > 0) {
           setMachines(data.machines);
           setSelectedMachineId((current) => {
-            const exists = data.machines.some((m: Machine) => m.id === current);
-            if (exists) return current;
+            // If current machine is connected, keep it
+            const currentObj = data.machines.find((m: Machine) => m.id === current);
+            if (currentObj && currentObj.connectionStatus === 'connected') {
+              return current;
+            }
+            // Auto-select whichever machine is currently connected
             const connected = data.machines.find((m: Machine) => m.connectionStatus === 'connected');
-            return connected ? connected.id : data.machines[0].id;
+            if (connected) return connected.id;
+            // Otherwise, keep current if valid, else fallback to first
+            const exists = data.machines.some((m: Machine) => m.id === current);
+            return exists ? current : data.machines[0].id;
           });
         }
       }
@@ -110,6 +121,7 @@ export default function App() {
     if (!isLive) return;
 
     const interval = setInterval(() => {
+      fetchMachines();
       fetchFeed();
     }, 2000);
 
