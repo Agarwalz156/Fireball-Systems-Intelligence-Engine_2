@@ -24,7 +24,7 @@ export const adminSettings: AdminSettings = {
   requireTokenAuth: true,
   autoEnrollAllowed: true,
   alertOnDisconnection: true,
-  disconnectionThresholdSec: 15,
+  disconnectionThresholdSec: 45,
 };
 
 // RBAC User Record Definition

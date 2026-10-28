@@ -117,7 +117,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
   const machineId = machine?.id || 'win-localhost';
   const token = machine?.enrollmentToken || 'fb_win_token_primary';
-  const apiOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://ais-dev-ko6ucrltlcrhb5odbgg2k7-480134225901.asia-east1.run.app';
+  const LIVE_CLOUD_RUN_URL = 'https://ais-dev-ko6ucrltlcrhb5odbgg2k7-480134225901.asia-east1.run.app';
+  const apiOrigin = (typeof window !== 'undefined' && !window.location.hostname.includes('vercel.app'))
+    ? window.location.origin
+    : LIVE_CLOUD_RUN_URL;
 
   const cleanPcId = newPcName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'win-pc2';
 

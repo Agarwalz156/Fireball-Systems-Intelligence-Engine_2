@@ -29,6 +29,11 @@ import { ReportModal } from './components/ReportModal';
 
 type TabType = 'overview' | 'performance' | 'anomalies' | 'investigations' | 'experiments' | 'agent' | 'admin';
 
+export const LIVE_BACKEND_URL = 'https://ais-dev-ko6ucrltlcrhb5odbgg2k7-480134225901.asia-east1.run.app';
+export const API_BASE_URL = typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')
+  ? LIVE_BACKEND_URL
+  : '';
+
 export default function App() {
   const { user, signInWithGoogle, signOut, isFirebaseConnected } = useAuth();
 
@@ -49,7 +54,7 @@ export default function App() {
   // Fetch telemetry feed from backend
   const fetchFeed = useCallback(async () => {
     try {
-      const res = await fetch(`/api/telemetry/feed?machineId=${encodeURIComponent(selectedMachineId)}&limit=120`);
+      const res = await fetch(`${API_BASE_URL}/api/telemetry/feed?machineId=${encodeURIComponent(selectedMachineId)}&limit=120`);
       if (res.ok) {
         const data = await res.json();
         if (data.machine) {
@@ -81,7 +86,7 @@ export default function App() {
   // Query machine list
   const fetchMachines = useCallback(async () => {
     try {
-      const res = await fetch('/api/machines');
+      const res = await fetch(`${API_BASE_URL}/api/machines`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.machines) && data.machines.length > 0) {
@@ -132,7 +137,7 @@ export default function App() {
   const handleSampleLocal = async () => {
     setIsSampling(true);
     try {
-      await fetch('/api/system/sample', { method: 'POST' });
+      await fetch(`${API_BASE_URL}/api/system/sample`, { method: 'POST' });
       await fetchFeed();
     } catch (err) {
       console.error('Failed to trigger local sample:', err);
@@ -146,7 +151,7 @@ export default function App() {
     setIsWorkloadRunning(true);
     setWorkloadBanner(`Safe ${type.toUpperCase()} workload running for ${durationSec}s. Real CPU/RAM telemetry will reflect load.`);
     try {
-      await fetch('/api/workload/run', {
+      await fetch(`${API_BASE_URL}/api/workload/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type, duration: durationSec }),
@@ -185,7 +190,7 @@ export default function App() {
   };
 
   const handleUpdateAlertRules = async (machineId: string, rules: AlertRulesConfig) => {
-    const res = await fetch('/api/machines/alert-rules', {
+    const res = await fetch(`${API_BASE_URL}/api/machines/alert-rules`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ machineId, alertRules: rules }),
