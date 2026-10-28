@@ -230,17 +230,27 @@ export default function App() {
 
           {/* Machine Selector & Global Actions */}
           <div className="flex items-center gap-2">
-            {/* Machine Selector Dropdown */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-950 text-xs font-mono text-zinc-200">
-              <Server className="w-3.5 h-3.5 text-zinc-400" />
+            {/* Prominent Target Host Selector Dropdown */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-500/50 bg-zinc-900 shadow-md shadow-emerald-950/20 text-xs font-mono">
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className={`w-2 h-2 rounded-full ${
+                  activeMachine?.connectionStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`} />
+                <span className="text-[11px] uppercase font-bold text-emerald-400 tracking-wider flex items-center gap-1">
+                  <Server className="w-3.5 h-3.5" />
+                  Target Host:
+                </span>
+              </div>
               <select
                 value={selectedMachineId}
                 onChange={(e) => setSelectedMachineId(e.target.value)}
-                className="bg-transparent focus:outline-none cursor-pointer text-xs"
+                className="bg-zinc-950 text-zinc-100 font-semibold border border-zinc-700 hover:border-emerald-500/80 rounded px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
+                title="Select active computer to monitor"
               >
                 {machines.map((m) => (
                   <option key={m.id} value={m.id} className="bg-zinc-900 text-zinc-100">
-                    {m.hostname} ({m.id})
+                    {m.platform === 'windows' || m.os?.toLowerCase().includes('win') ? '🪟 ' : '🐧 '}
+                    {m.name || m.hostname || m.id} ({m.id})
                   </option>
                 ))}
               </select>
@@ -423,6 +433,9 @@ export default function App() {
             onTriggerWorkload={handleTriggerWorkload}
             onSampleLocal={handleSampleLocal}
             isSampling={isSampling}
+            machines={machines}
+            selectedMachineId={selectedMachineId}
+            onSelectMachine={setSelectedMachineId}
           />
         )}
 

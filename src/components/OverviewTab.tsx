@@ -30,6 +30,9 @@ interface OverviewTabProps {
   onTriggerWorkload: (type: 'cpu' | 'memory') => void;
   onSampleLocal: () => void;
   isSampling: boolean;
+  machines?: Machine[];
+  selectedMachineId?: string;
+  onSelectMachine?: (id: string) => void;
 }
 
 export const OverviewTab: React.FC<OverviewTabProps> = ({
@@ -39,6 +42,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   onTriggerWorkload,
   onSampleLocal,
   isSampling,
+  machines = [],
+  selectedMachineId,
+  onSelectMachine,
 }) => {
   const [copiedCmd, setCopiedCmd] = useState(false);
   const activeAnomalies = anomalies.filter((a) => a.status === 'active');
@@ -276,8 +282,41 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </div>
 
             <p className="text-xs text-zinc-400 font-mono mt-0.5">
-              Host: <span className="text-zinc-300">{machine?.hostname}</span> ({machine?.id}) | Cores: {machine?.cpuCores || 4} | RAM: {formatBytes(machine?.totalMemoryBytes, 'GB')} | Uptime: {formatUptime(latestSample?.uptimeSeconds)}
+              Host: <span className="text-zinc-300 font-bold">{machine?.hostname || machine?.id}</span> | Cores: {machine?.cpuCores || 4} | RAM: {formatBytes(machine?.totalMemoryBytes, 'GB')} | Uptime: {formatUptime(latestSample?.uptimeSeconds)}
             </p>
+
+            {/* In-page Target Host Selector Pills */}
+            {machines.length > 0 && onSelectMachine && (
+              <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-zinc-800/60">
+                <span className="text-[11px] font-mono font-bold text-emerald-400 flex items-center gap-1.5 uppercase tracking-wide">
+                  <Server className="w-3.5 h-3.5 text-emerald-400" />
+                  Target Host:
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {machines.map((m) => {
+                    const isSelected = (selectedMachineId ? m.id === selectedMachineId : m.id === machine?.id);
+                    const isConnected = m.connectionStatus === 'connected';
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => onSelectMachine(m.id)}
+                        className={`px-2.5 py-1 rounded text-xs font-mono font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+                          isSelected
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/60 shadow-sm ring-1 ring-emerald-500/30'
+                            : 'bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700'
+                        }`}
+                        title={`Switch to ${m.hostname || m.id}`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
+                        <span>{m.platform === 'windows' || m.os?.toLowerCase().includes('win') ? '🪟' : '🐧'} {m.name || m.hostname || m.id}</span>
+                        {isSelected && <span className="text-[10px] text-emerald-400 font-bold uppercase">(Active)</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
