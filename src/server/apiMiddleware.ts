@@ -24,7 +24,7 @@ export const adminSettings: AdminSettings = {
   requireTokenAuth: true,
   autoEnrollAllowed: true,
   alertOnDisconnection: true,
-  disconnectionThresholdSec: 45,
+  disconnectionThresholdSec: 90,
 };
 
 // RBAC User Record Definition
@@ -615,7 +615,7 @@ export function handleApiRequest(req: IncomingMessage, res: ServerResponse): boo
   // =========================================================================
   // 1b. Download Monitor Script Endpoint
   // =========================================================================
-  if ((pathname === '/api/agent/script' || pathname === '/api/scripts/windows_monitor.py') && req.method === 'GET') {
+  if ((pathname === '/api/agent/script' || pathname === '/windows_monitor.py' || pathname === '/api/windows_monitor.py' || pathname === '/api/scripts/windows_monitor.py' || pathname === '/scripts/windows_monitor.py') && req.method === 'GET') {
     try {
       let scriptPath = path.resolve(process.cwd(), 'public', 'windows_monitor.py');
       if (!fs.existsSync(scriptPath)) {

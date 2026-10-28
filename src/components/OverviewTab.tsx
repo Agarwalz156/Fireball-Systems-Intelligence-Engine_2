@@ -110,41 +110,39 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     }
   };
 
-  const isWindows = machine?.platform === 'windows' || machine?.os?.toLowerCase().includes('win');
+  const isWindows = !machine || machine.platform === 'windows' || machine.os?.toLowerCase().includes('win');
   const isMac = machine?.platform === 'darwin' || machine?.os?.toLowerCase().includes('mac');
   const isLinux = !isWindows && !isMac;
 
-  const [activeShell, setActiveShell] = useState<'powershell' | 'cmd' | 'bash'>(isWindows ? 'powershell' : (isMac || isLinux ? 'bash' : 'powershell'));
+  const [activeShell, setActiveShell] = useState<'powershell' | 'cmd' | 'bash'>('powershell');
 
   const [showAddPcModal, setShowAddPcModal] = useState(false);
   const [newPcName, setNewPcName] = useState('win-pc2');
-  const [newPcShell, setNewPcShell] = useState<'cmd' | 'powershell'>('cmd');
+  const [newPcShell, setNewPcShell] = useState<'powershell' | 'cmd'>('powershell');
   const [copiedNewPc, setCopiedNewPc] = useState(false);
 
-  const machineId = machine?.id || 'win-localhost';
+  const machineId = machine?.id || 'win-pc2';
   const token = machine?.enrollmentToken || 'fb_win_token_primary';
   const LIVE_CLOUD_RUN_URL = 'https://ais-dev-ko6ucrltlcrhb5odbgg2k7-480134225901.asia-east1.run.app';
-  const apiOrigin = (typeof window !== 'undefined' && !window.location.hostname.includes('vercel.app'))
-    ? window.location.origin
-    : LIVE_CLOUD_RUN_URL;
+  const apiOrigin = LIVE_CLOUD_RUN_URL;
 
   const cleanPcId = newPcName.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'win-pc2';
 
-  const newPcCmd = `curl -L -s -o windows_monitor.py ${apiOrigin}/windows_monitor.py && py -3 -m pip install psutil requests && py -3 windows_monitor.py --machine-id "${cleanPcId}" --token "fb_win_token_primary" --url "${apiOrigin}/api/telemetry"`;
-
   const newPcPowerShell = `Invoke-WebRequest -Uri "${apiOrigin}/api/agent/script" -OutFile "windows_monitor.py"\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${cleanPcId}" --token "fb_win_token_primary" --url "${apiOrigin}/api/telemetry"`;
 
+  const newPcCmd = `curl.exe -L -o windows_monitor.py "${apiOrigin}/windows_monitor.py" && py -3 -m pip install psutil requests && py -3 windows_monitor.py --machine-id "${cleanPcId}" --token "fb_win_token_primary" --url "${apiOrigin}/api/telemetry"`;
+
   const copyNewPcCommand = () => {
-    navigator.clipboard.writeText(newPcShell === 'cmd' ? newPcCmd : newPcPowerShell);
+    navigator.clipboard.writeText(newPcShell === 'powershell' ? newPcPowerShell : newPcCmd);
     setCopiedNewPc(true);
     setTimeout(() => setCopiedNewPc(false), 2000);
   };
 
-  const powerShellCmd = `# 1. Download monitor script directly onto your Windows laptop:\nInvoke-WebRequest -Uri "${apiOrigin}/windows_monitor.py" -OutFile "windows_monitor.py"\n\n# 2. Install dependencies & launch agent using Python Launcher:\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
+  const powerShellCmd = `# 1. Download monitor script onto your Windows PC:\nInvoke-WebRequest -Uri "${apiOrigin}/api/agent/script" -OutFile "windows_monitor.py"\n\n# 2. Install dependencies & launch agent using Python Launcher:\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
 
-  const cmdPromptCmd = `:: 1. Download monitor script\ncurl -o windows_monitor.py ${apiOrigin}/windows_monitor.py\n\n:: 2. Install dependencies & launch with py launcher\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
+  const cmdPromptCmd = `curl.exe -L -o windows_monitor.py "${apiOrigin}/windows_monitor.py"\npy -3 -m pip install psutil requests\npy -3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
 
-  const bashCmd = `# 1. Download monitor script\ncurl -fsSL ${apiOrigin}/windows_monitor.py -o windows_monitor.py\n\n# 2. Install dependencies & launch agent\npython3 -m pip install psutil requests\npython3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
+  const bashCmd = `curl -fsSL "${apiOrigin}/windows_monitor.py" -o windows_monitor.py\npython3 -m pip install psutil requests\npython3 windows_monitor.py --machine-id "${machineId}" --token "${token}" --url "${apiOrigin}/api/telemetry"`;
 
   const currentCmd = activeShell === 'powershell' ? powerShellCmd : (activeShell === 'cmd' ? cmdPromptCmd : bashCmd);
 
@@ -264,7 +262,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="font-semibold text-zinc-100 text-sm font-mono">
-                {machine?.name || machine?.hostname || 'Primary Host'}
+                {machine?.name || machine?.hostname || 'Device (MUDIT-PC2)'}
               </span>
 
               {/* OS / Platform Tag */}
@@ -282,7 +280,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </div>
 
             <p className="text-xs text-zinc-400 font-mono mt-0.5">
-              Host: <span className="text-zinc-300 font-bold">{machine?.hostname || machine?.id}</span> | Cores: {machine?.cpuCores || 4} | RAM: {formatBytes(machine?.totalMemoryBytes, 'GB')} | Uptime: {formatUptime(latestSample?.uptimeSeconds)}
+              Host: <span className="text-zinc-300 font-bold">{machine?.hostname || machine?.id || 'MUDIT-PC2'}</span> | Cores: {machine?.cpuCores || 8} | RAM: {formatBytes(machine?.totalMemoryBytes, 'GB')} | Uptime: {formatUptime(latestSample?.uptimeSeconds)}
             </p>
 
             {/* In-page Target Host Selector Pills */}
@@ -439,7 +437,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               </div>
 
               <a
-                href={`${apiOrigin}/windows_monitor.py`}
+                href={`${apiOrigin}/api/agent/script`}
                 download="windows_monitor.py"
                 className="text-[11px] text-zinc-400 hover:text-amber-300 underline transition-colors"
                 title="Direct script download"

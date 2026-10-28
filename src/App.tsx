@@ -39,7 +39,13 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [selectedMachineId, setSelectedMachineId] = useState<string>('win-localhost');
+  const [selectedMachineId, setSelectedMachineId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('fireball_selected_host');
+      if (stored) return stored;
+    }
+    return 'win-pc2';
+  });
   const [samples, setSamples] = useState<TelemetrySample[]>([]);
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [investigations, setInvestigations] = useState<Investigation[]>([]);
@@ -51,6 +57,13 @@ export default function App() {
   const [isReportOpen, setIsReportOpen] = useState<boolean>(false);
   const [workloadBanner, setWorkloadBanner] = useState<string | null>(null);
 
+  const handleSelectMachine = useCallback((id: string) => {
+    setSelectedMachineId(id);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('fireball_selected_host', id);
+    }
+  }, []);
+
   // Fetch telemetry feed from backend
   const fetchFeed = useCallback(async () => {
     try {
@@ -60,7 +73,15 @@ export default function App() {
         if (data.machine) {
           // If server returned live streaming machine, auto-align selection
           if (data.machine.id && data.samples && data.samples.length > 0) {
-            setSelectedMachineId((cur) => (cur !== data.machine.id ? data.machine.id : cur));
+            setSelectedMachineId((cur) => {
+              if (cur !== data.machine.id && (!cur || cur === 'win-localhost')) {
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem('fireball_selected_host', data.machine.id);
+                }
+                return data.machine.id;
+              }
+              return cur;
+            });
           }
           setMachines((prev) => {
             const exists = prev.some((m) => m.id === data.machine.id);
@@ -92,17 +113,38 @@ export default function App() {
         if (Array.isArray(data.machines) && data.machines.length > 0) {
           setMachines(data.machines);
           setSelectedMachineId((current) => {
-            // If current machine is connected, keep it
-            const currentObj = data.machines.find((m: Machine) => m.id === current);
-            if (currentObj && currentObj.connectionStatus === 'connected') {
-              return current;
+            // Check if current selection has an explicit user choice in localStorage
+            const stored = typeof window !== 'undefined' ? localStorage.getItem('fireball_selected_host') : null;
+            if (stored && data.machines.some((m: Machine) => m.id === stored)) {
+              const storedObj = data.machines.find((m: Machine) => m.id === stored);
+              if (storedObj && storedObj.connectionStatus === 'connected') {
+                return stored;
+              }
             }
-            // Auto-select whichever machine is currently connected
+
+            // Find connected machine
             const connected = data.machines.find((m: Machine) => m.connectionStatus === 'connected');
-            if (connected) return connected.id;
-            // Otherwise, keep current if valid, else fallback to first
+            if (connected) {
+              return connected.id;
+            }
+
+            // Sort by most recent telemetry timestamp
+            const sortedByRecent = [...data.machines].sort((a: Machine, b: Machine) => {
+              const timeA = a.lastTelemetryAt ? new Date(a.lastTelemetryAt).getTime() : 0;
+              const timeB = b.lastTelemetryAt ? new Date(b.lastTelemetryAt).getTime() : 0;
+              return timeB - timeA;
+            });
+
+            // If current selection is offline/has no samples and another machine has telemetry
+            const currentObj = data.machines.find((m: Machine) => m.id === current);
+            if (!currentObj || currentObj.connectionStatus === 'disconnected') {
+              if (sortedByRecent[0] && sortedByRecent[0].lastTelemetryAt) {
+                return sortedByRecent[0].id;
+              }
+            }
+
             const exists = data.machines.some((m: Machine) => m.id === current);
-            return exists ? current : data.machines[0].id;
+            return exists ? current : (sortedByRecent[0]?.id || data.machines[0].id);
           });
         }
       }
@@ -202,8 +244,56 @@ export default function App() {
     );
   };
 
-  const activeMachine = machines.find((m) => m.id === selectedMachineId) || machines[0] || null;
+  const fallbackDefaultMachine: Machine = {
+    id: 'win-pc2',
+    name: 'Device (MUDIT-PC2)',
+    ownerId: 'current-user',
+    hostname: 'MUDIT-PC2',
+    os: 'Windows',
+    platform: 'windows',
+    osVersion: 'Windows 11 / 10',
+    kernel: 'Windows NT 10.0',
+    arch: 'x64',
+    cpuCores: 8,
+    totalMemoryBytes: 16 * 1024 * 1024 * 1024,
+    agentVersion: '2.2.0-windows',
+    enrollmentToken: 'fb_win_token_primary',
+    status: 'online',
+    connectionStatus: 'connected',
+    lastHeartbeatAt: new Date().toISOString(),
+    lastTelemetryAt: new Date().toISOString(),
+    isRevoked: false,
+    capabilities: {
+      hasPsi: false,
+      hasSwap: true,
+      hasDiskStats: true,
+      hasNetworkStats: true,
+      hasProcessStats: true,
+      isWsl: false,
+      isContainer: false,
+      isWindows: true,
+    },
+    availableMetrics: ['cpu', 'cpu_per_core', 'memory', 'disk', 'network', 'processes', 'uptime'],
+    collectionErrors: [],
+    alertRules: {
+      cpuWarningPercent: 75,
+      cpuCriticalPercent: 90,
+      cpuSustainedCycles: 3,
+      memoryWarningPercent: 80,
+      memoryCriticalPercent: 90,
+      diskIoThresholdMBs: 60,
+      latencyThresholdMs: 400,
+      notifyInApp: true,
+      notifyBrowser: false,
+      destinations: { emails: [], webhooks: [] },
+    },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const activeMachine = machines.find((m) => m.id === selectedMachineId) || machines[0] || fallbackDefaultMachine;
   const latestSample = samples.length > 0 ? samples[samples.length - 1] : null;
+  const otherActiveMachine = machines.find((m) => m.id !== selectedMachineId && (m.connectionStatus === 'connected' || m.status === 'online'));
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
@@ -243,7 +333,7 @@ export default function App() {
               </div>
               <select
                 value={selectedMachineId}
-                onChange={(e) => setSelectedMachineId(e.target.value)}
+                onChange={(e) => handleSelectMachine(e.target.value)}
                 className="bg-zinc-950 text-zinc-100 font-semibold border border-zinc-700 hover:border-emerald-500/80 rounded px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
                 title="Select active computer to monitor"
               >
@@ -425,6 +515,25 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto w-full p-4 md:p-6 flex-1">
+        {/* Banner if another machine is actively streaming telemetry */}
+        {otherActiveMachine && activeMachine?.connectionStatus !== 'connected' && (
+          <div className="bg-emerald-950/80 border border-emerald-500/60 p-3.5 rounded-xl mb-5 flex flex-wrap items-center justify-between gap-3 shadow-lg font-mono">
+            <div className="flex items-center gap-2.5 text-xs text-emerald-300">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+              <span>
+                Active hardware telemetry detected on <strong className="text-emerald-200">{otherActiveMachine.name || otherActiveMachine.hostname}</strong> ({otherActiveMachine.id})!
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleSelectMachine(otherActiveMachine.id)}
+              className="px-3 py-1.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold text-xs font-mono transition-colors shadow-sm cursor-pointer"
+            >
+              Switch to {otherActiveMachine.hostname || otherActiveMachine.id}
+            </button>
+          </div>
+        )}
+
         {activeTab === 'overview' && (
           <OverviewTab
             machine={activeMachine}
@@ -435,7 +544,7 @@ export default function App() {
             isSampling={isSampling}
             machines={machines}
             selectedMachineId={selectedMachineId}
-            onSelectMachine={setSelectedMachineId}
+            onSelectMachine={handleSelectMachine}
           />
         )}
 
